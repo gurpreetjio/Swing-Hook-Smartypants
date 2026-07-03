@@ -2,6 +2,7 @@ import { StatusBar } from 'expo-status-bar';
 import React, { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { AdventureFlow } from './src/screens/AdventureFlow';
+import { AdventureRunScreen } from './src/screens/AdventureRunScreen';
 import { GradeSelectScreen } from './src/screens/GradeSelectScreen';
 import { HomeScreen, Route } from './src/screens/HomeScreen';
 import { LeaderboardScreen } from './src/screens/LeaderboardScreen';
@@ -32,6 +33,8 @@ function Root() {
   switch (route.name) {
     case 'adventure':
       return <AdventureFlow mode={route.mode} onHome={goHome} />;
+    case 'run':
+      return <AdventureRunScreen onHome={goHome} />;
     case 'tournament':
       return <TournamentScreen onHome={goHome} />;
     case 'leaderboard':

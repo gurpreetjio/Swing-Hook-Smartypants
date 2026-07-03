@@ -13,7 +13,8 @@ import { theme } from '../theme';
 export type Route =
   | { name: 'home' }
   | { name: 'gradeSelect' }
-  | { name: 'adventure'; mode: 'swing' | 'grapple' }
+  | { name: 'adventure'; mode: 'swing' | 'grapple' } // Classic & Grapple level modes
+  | { name: 'run' } // Adventure: the endless meters run
   | { name: 'tournament' }
   | { name: 'leaderboard' }
   | { name: 'locker' };
@@ -66,8 +67,8 @@ export function HomeScreen({ go }: { go: (r: Route) => void }) {
       <BigButton
         label={
           adv.level > LEVELS_PER_GRADE
-            ? `ADVENTURE  •  ⚡ CHALLENGE LV ${adv.level}`
-            : `ADVENTURE  •  Level ${adv.level}/${LEVELS_PER_GRADE}`
+            ? `CLASSIC  •  ⚡ CHALLENGE LV ${adv.level}`
+            : `CLASSIC  •  Level ${adv.level}/${LEVELS_PER_GRADE}`
         }
         sub={
           adv.completed
@@ -76,6 +77,12 @@ export function HomeScreen({ go }: { go: (r: Route) => void }) {
         }
         color={theme.accent2}
         onPress={() => go({ name: 'adventure', mode: 'swing' })}
+      />
+      <BigButton
+        label={`ADVENTURE  •  BEST ${profile.adventureBest}m`}
+        sub="One endless run — portals, green turbo hooks, red sling hooks"
+        color={theme.good}
+        onPress={() => go({ name: 'run' })}
       />
       <BigButton
         label={

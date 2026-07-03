@@ -3,6 +3,15 @@ import { mulberry32, randInt, hashString, Rng } from './rng';
 export interface Anchor {
   x: number;
   y: number;
+  // adventure-run specials: green speeds up your spin, red slings you backward
+  kind?: 'green' | 'red';
+}
+
+// Adventure-run portal: touch it and it zooms you fast to the right.
+export interface Portal {
+  x: number;
+  y: number;
+  r: number;
 }
 
 export interface AirHazard {
@@ -48,6 +57,7 @@ export interface Level {
   floorSpikes: FloorSpikes[];
   floorGaps: FloorGap[];
   planks: Plank[];
+  portals: Portal[];
   stars: Star[];
   startX: number;
   startY: number;
@@ -258,6 +268,86 @@ export function generateLevel(grade: number, level: number, seedSalt = 'adv'): L
     floorSpikes,
     floorGaps,
     planks,
+    portals: [],
+    stars,
+    startX: 60,
+    startY: 340,
+    finishX,
+    floorY,
+    ceilY: -80,
+  };
+}
+
+/**
+ * The Adventure run: one enormous endless course scored in meters (10px = 1m).
+ * Difficulty ramps with distance. Sprinkled through it: portals that zoom you
+ * right, green hooks that turbo-charge your spin, and red hooks that sling you
+ * backward. The run ends when you fall — there is no finish line to speak of.
+ */
+export function generateAdventureLevel(seed: number): Level {
+  const rng = mulberry32(seed >>> 0);
+  const floorY = 640;
+  const anchors: Anchor[] = [];
+  const portals: Portal[] = [];
+  const planks: Plank[] = [];
+  const floorSpikes: FloorSpikes[] = [];
+  const floorGaps: FloorGap[] = [];
+  const airHazards: AirHazard[] = [];
+
+  const N = 220;
+  let x = 380;
+  for (let i = 0; i < N; i++) {
+    const prog = i / N;
+    x += randInt(rng, 175, 250 + Math.round(prog * 110));
+    const y = randInt(rng, 60, 180 + Math.round(prog * 220));
+    let kind: Anchor['kind'];
+    if (i > 5 && rng() < 0.18) kind = 'green';
+    else if (i > 10 && rng() < 0.12) kind = 'red';
+    anchors.push(kind ? { x, y, kind } : { x, y });
+
+    if (i > 3 && rng() < 0.11) portals.push({ x: x + 95, y: randInt(rng, 160, 420), r: 34 });
+    if (i > 6 && rng() < 0.14) {
+      const w = randInt(rng, 110, 190);
+      planks.push({ x: x + 60, y: randInt(rng, 300, 520), w, h: 22 });
+    }
+    if (i > 12 && rng() < 0.1) floorSpikes.push({ x0: x - 90, x1: x + 90 });
+    if (i > 20 && rng() < 0.08) floorGaps.push({ x0: x + 60, x1: x + 60 + randInt(rng, 160, 320) });
+    if (i > 15 && rng() < 0.1) {
+      airHazards.push({
+        x: x + 120,
+        y: randInt(rng, 240, 480),
+        r: randInt(rng, 22, 34),
+        oscAmp: randInt(rng, 40, 120),
+        oscSpeed: 1 + rng() * 2,
+        phase: rng() * Math.PI * 2,
+        axis: rng() < 0.4 ? 'x' : 'y',
+      });
+    }
+  }
+
+  // tidy overlaps: merge gaps, then drop spikes that fall inside a gap
+  floorGaps.sort((a, b) => a.x0 - b.x0);
+  const gaps: FloorGap[] = [];
+  for (const g of floorGaps) {
+    const last = gaps[gaps.length - 1];
+    if (last && g.x0 < last.x1 + 120) last.x1 = Math.max(last.x1, g.x1);
+    else gaps.push({ ...g });
+  }
+  const spikes = floorSpikes.filter((s) => !gaps.some((g) => s.x0 < g.x1 && s.x1 > g.x0));
+
+  const finishX = x + 600;
+  const stars: Star[] = [];
+  for (let i = 0; i < 140; i++) {
+    stars.push({ x: rng() * (finishX + 600), y: rng() * floorY * 0.85, r: 1 + rng() * 2, o: 0.25 + rng() * 0.5 });
+  }
+
+  return {
+    anchors,
+    airHazards,
+    floorSpikes: spikes,
+    floorGaps: gaps,
+    planks,
+    portals,
     stars,
     startX: 60,
     startY: 340,

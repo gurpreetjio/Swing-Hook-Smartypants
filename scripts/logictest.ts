@@ -2,7 +2,7 @@
  * Run: npx tsc -p tsconfig.test.json && node .test-build/scripts/logictest.js
  */
 import { generateQuestion } from '../src/math/mathGen';
-import { generateLevel, stageForLevel, themeForLevel, THEMES } from '../src/game/levelGen';
+import { generateAdventureLevel, generateLevel, Level, stageForLevel, themeForLevel, THEMES, WORLD } from '../src/game/levelGen';
 import { findAnchor, newSim, step } from '../src/game/physics';
 import { weeklyRotation } from '../src/data/cosmetics';
 import { rankForXp, RANKS } from '../src/data/ranks';
@@ -162,6 +162,90 @@ assert(
   `rapid taps should reel up much faster (tap minDist ${Math.round(tapDist)} vs hold ${Math.round(holdDist)})`
 );
 console.log(`tap-ratchet: tap climbs to ${Math.round(tapDist)}px vs hold ${Math.round(holdDist)}px — ok`);
+
+// ---- adventure run: endless course with portals and special hooks ----
+for (const seed of [12345, 999, 424242]) {
+  const alvl = generateAdventureLevel(seed);
+  assert(alvl.anchors.length >= 200, `adventure ${seed}: too few anchors`);
+  for (let i = 1; i < alvl.anchors.length; i++) {
+    assert(alvl.anchors[i].x > alvl.anchors[i - 1].x, `adventure ${seed}: anchors not increasing`);
+  }
+  assert(alvl.anchors.some((a) => a.kind === 'green'), `adventure ${seed}: no green hooks`);
+  assert(alvl.anchors.some((a) => a.kind === 'red'), `adventure ${seed}: no red hooks`);
+  assert(alvl.portals.length >= 10, `adventure ${seed}: too few portals (${alvl.portals.length})`);
+  for (let i = 1; i < alvl.floorGaps.length; i++) {
+    assert(alvl.floorGaps[i].x0 >= alvl.floorGaps[i - 1].x1, `adventure ${seed}: overlapping gaps`);
+  }
+  assert(
+    !alvl.floorSpikes.some((s) => alvl.floorGaps.some((g) => s.x0 < g.x1 && s.x1 > g.x0)),
+    `adventure ${seed}: spikes inside gaps`
+  );
+}
+console.log('adventure gen: ok');
+
+// synthetic mini-level for special-hook physics
+function makeLevel(anchors: Level['anchors'], portals: Level['portals'] = []): Level {
+  return {
+    anchors,
+    portals,
+    airHazards: [],
+    floorSpikes: [],
+    floorGaps: [],
+    planks: [],
+    stars: [],
+    startX: 60,
+    startY: 340,
+    finishX: 1e9,
+    floorY: 640,
+    ceilY: -80,
+  };
+}
+
+// red hook: slings you the opposite direction you came from
+{
+  const lvl = makeLevel([{ x: 500, y: 100, kind: 'red' }]);
+  const sim = newSim(lvl);
+  sim.x = 430;
+  sim.y = 300;
+  sim.vx = 400;
+  sim.vy = 0;
+  step(sim, lvl, 'swing', true, 1 / 120);
+  assert(sim.hooked === 0, 'red hook should attach');
+  assert(sim.vx < 0, `red hook should reverse vx (got ${Math.round(sim.vx)})`);
+}
+
+// green hook: pumps speed faster than a normal hook
+{
+  const speeds: number[] = [];
+  for (const kind of [undefined, 'green' as const]) {
+    const lvl = makeLevel([kind ? { x: 500, y: 100, kind } : { x: 500, y: 100 }]);
+    const sim = newSim(lvl);
+    sim.x = 500;
+    sim.y = 350;
+    sim.vx = 300;
+    sim.vy = 0;
+    for (let t = 0; t < 0.5; t += 1 / 120) step(sim, lvl, 'swing', true, 1 / 120);
+    speeds.push(Math.hypot(sim.vx, sim.vy));
+  }
+  assert(speeds[1] > speeds[0] + 80, `green hook should spin faster (green ${Math.round(speeds[1])} vs normal ${Math.round(speeds[0])})`);
+}
+
+// portal: zooms you right, past the normal speed cap
+{
+  const lvl = makeLevel([], [{ x: 800, y: 340, r: 34 }]);
+  const sim = newSim(lvl);
+  sim.x = 700;
+  sim.y = 340;
+  sim.vx = 400;
+  sim.vy = 0;
+  let maxSp = 0;
+  for (let t = 0; t < 0.6; t += 1 / 120) {
+    step(sim, lvl, 'swing', false, 1 / 120);
+    maxSp = Math.max(maxSp, Math.hypot(sim.vx, sim.vy));
+  }
+  assert(maxSp > WORLD.maxSpeed + 200, `portal should exceed the speed cap (max ${Math.round(maxSp)})`);
+}
+console.log('special hooks & portals: ok');
 
 // ---- floor gaps are fatal: drop into one and there is nothing to land on ----
 {

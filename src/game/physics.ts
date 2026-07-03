@@ -16,6 +16,8 @@ export interface Sim {
   lastHooked: number | null; // for the tap-ratchet: which anchor we just released
   lastReleaseT: number;
   reelBoostUntil: number; // fast reel-in window after a quick re-tap
+  dashUntil: number; // portal zoom window: speed cap is lifted
+  portalCdUntil: number; // don't re-trigger the same portal instantly
 }
 
 export function newSim(level: Level): Sim {
@@ -33,6 +35,8 @@ export function newSim(level: Level): Sim {
     lastHooked: null,
     lastReleaseT: -1e9,
     reelBoostUntil: 0,
+    dashUntil: 0,
+    portalCdUntil: 0,
   };
 }
 
@@ -47,6 +51,8 @@ export function respawn(sim: Sim, level: Level): void {
   sim.lastHooked = null;
   sim.lastReleaseT = -1e9;
   sim.reelBoostUntil = 0;
+  sim.dashUntil = 0;
+  sim.portalCdUntil = 0;
 }
 
 /**
@@ -106,6 +112,11 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
         sim.vx += ((a.x - sim.x) / d) * 260;
         sim.vy += ((a.y - sim.y) / d) * 260;
       }
+      // red hooks sling you back the way you came from
+      if (a.kind === 'red') {
+        sim.vx = -sim.vx * 1.15;
+        sim.vy *= 0.9;
+      }
     }
   } else if (!holding && sim.hooked !== null) {
     sim.lastHooked = sim.hooked;
@@ -130,8 +141,10 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
   }
 
   if (sim.hooked !== null && mode === 'swing') {
-    // energy pump while swinging, like the original's accelerating swings
-    const boost = 1 + 0.35 * dt;
+    // energy pump while swinging, like the original's accelerating swings;
+    // green hooks turbo-charge the spin
+    const pump = level.anchors[sim.hooked].kind === 'green' ? 1.5 : 0.35;
+    const boost = 1 + pump * dt;
     sim.vx *= boost;
     sim.vy *= boost;
     // reel-in adds momentum and keeps arcs tight; long ropes (grabbed from far
@@ -142,9 +155,22 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
     sim.ropeLen = Math.max(90, sim.ropeLen - reel * dt);
   }
 
+  // portals: zoom you really fast to the right (Adventure run only)
+  for (const pt of level.portals) {
+    if (sim.t < sim.portalCdUntil) break;
+    if (Math.hypot(sim.x - pt.x, sim.y - pt.y) < pt.r + WORLD.playerR) {
+      sim.vx = 2200;
+      sim.vy *= 0.3;
+      sim.dashUntil = sim.t + 0.55;
+      sim.portalCdUntil = sim.t + 0.9;
+      sim.hooked = null; // the zoom rips you off the rope
+      break;
+    }
+  }
+
   const cap = mode === 'swing' ? WORLD.maxSpeed : WORLD.grappleMaxSpeed;
   const sp = Math.hypot(sim.vx, sim.vy);
-  if (sp > cap) {
+  if (sp > cap && sim.t >= sim.dashUntil) {
     sim.vx = (sim.vx / sp) * cap;
     sim.vy = (sim.vy / sp) * cap;
   }
