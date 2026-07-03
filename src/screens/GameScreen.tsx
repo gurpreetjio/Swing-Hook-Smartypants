@@ -176,9 +176,10 @@ export function GameScreen({
         if (t.length > TRAIL_LEN) t.shift();
       }
 
-      // camera follow
+      // camera follow: keep the player dead-center so you can see what's
+      // coming ahead and what's behind you equally
       const cam = camRef.current;
-      const tx = sim.x - width * 0.32;
+      const tx = sim.x - width * 0.5;
       const ty = sim.y - height * 0.52;
       cam.x += (tx - cam.x) * 0.12;
       cam.y += (ty - cam.y) * 0.12;
