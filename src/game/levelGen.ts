@@ -19,6 +19,14 @@ export interface FloorSpikes {
   x1: number;
 }
 
+// Striped bumper plank floating mid-level: bounces the player away on contact.
+export interface Plank {
+  x: number; // top-left
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface Star {
   x: number;
   y: number;
@@ -30,6 +38,7 @@ export interface Level {
   anchors: Anchor[];
   airHazards: AirHazard[];
   floorSpikes: FloorSpikes[];
+  planks: Plank[];
   stars: Star[];
   startX: number;
   startY: number;
@@ -97,6 +106,24 @@ export function generateLevel(grade: number, level: number, seedSalt = 'adv'): L
     }
   }
 
+  // mid-air bumper planks from level 20 — more and bigger as you progress
+  const planks: Plank[] = [];
+  if (level >= 20) {
+    const n = Math.min(6, 1 + Math.floor((level - 20) / 25));
+    for (let i = 0; i < n; i++) {
+      const between = randInt(rng, 1, anchors.length - 2);
+      const a = anchors[between];
+      const b = anchors[between + 1];
+      const w = randInt(rng, 110, 180 + Math.round(diff * 80));
+      planks.push({
+        x: (a.x + b.x) / 2 - w / 2 + randInt(rng, -40, 40),
+        y: randInt(rng, 280, 500),
+        w,
+        h: 22,
+      });
+    }
+  }
+
   const stars: Star[] = [];
   for (let i = 0; i < 26; i++) {
     stars.push({
@@ -111,6 +138,7 @@ export function generateLevel(grade: number, level: number, seedSalt = 'adv'): L
     anchors,
     airHazards,
     floorSpikes,
+    planks,
     stars,
     startX: 60,
     startY: 340,

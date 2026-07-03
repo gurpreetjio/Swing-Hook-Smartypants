@@ -165,11 +165,47 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
       }
     }
     sim.y = level.floorY - WORLD.playerR;
-    if (sim.vy > 0) sim.vy = -sim.vy * 0.88;
-    if (Math.abs(sim.vy) < 140) sim.vy = -140; // never let the player stall flat
-    sim.vx *= 0.985;
+    // trampoline: medium-high boost, never a dead bounce
+    if (sim.vy > 0) sim.vy = -Math.max(Math.abs(sim.vy) * 1.02, 620);
+    sim.vx *= 0.99;
   } else {
     sim.airtime += dt;
+  }
+
+  // mid-air bumper planks: reflect the player away with a boost
+  for (const p of level.planks) {
+    const cx = Math.max(p.x, Math.min(sim.x, p.x + p.w));
+    const cy = Math.max(p.y, Math.min(sim.y, p.y + p.h));
+    const dx = sim.x - cx;
+    const dy = sim.y - cy;
+    const d2 = dx * dx + dy * dy;
+    const r = WORLD.playerR;
+    if (d2 < r * r) {
+      let nx: number;
+      let ny: number;
+      if (d2 > 1e-6) {
+        const d = Math.sqrt(d2);
+        nx = dx / d;
+        ny = dy / d;
+      } else {
+        // center inside the plank: eject toward the nearest horizontal face
+        nx = 0;
+        ny = sim.y < p.y + p.h / 2 ? -1 : 1;
+      }
+      sim.x = cx + nx * r;
+      sim.y = cy + ny * r;
+      const vn = sim.vx * nx + sim.vy * ny;
+      if (vn < 0) {
+        // reflect with a boost, and guarantee a solid kick away from the plank
+        sim.vx -= 2 * vn * nx;
+        sim.vy -= 2 * vn * ny;
+        const outSpeed = sim.vx * nx + sim.vy * ny;
+        if (outSpeed < 560) {
+          sim.vx += nx * (560 - outSpeed);
+          sim.vy += ny * (560 - outSpeed);
+        }
+      }
+    }
   }
 
   // spinning/oscillating hazards

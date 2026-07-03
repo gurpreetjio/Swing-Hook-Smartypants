@@ -167,8 +167,30 @@ export function GameScreen({
 
           {/* spike strips */}
           <G x={-cam.x} y={-cam.y}>
+            {/* striped plank band along the floor top */}
+            <Line x1={cam.x - 60} y1={lvl.floorY + 8} x2={cam.x + width + 60} y2={lvl.floorY + 8} stroke="#0c0e28" strokeWidth={16} />
+            <Line x1={cam.x - 60} y1={lvl.floorY + 8} x2={cam.x + width + 60} y2={lvl.floorY + 8} stroke="#f2f3ff" strokeWidth={7} strokeDasharray="26,20" opacity={0.9} />
+
             {spikePolys.map((p, i) => (
               <Polygon key={`sp${i}`} points={p} fill={theme.hazard} />
+            ))}
+
+            {/* mid-air bumper planks */}
+            {lvl.planks.map((p, i) => (
+              <G key={`pl${i}`}>
+                <Rect x={p.x} y={p.y} width={p.w} height={p.h} rx={p.h / 2} fill="#0c0e28" />
+                <Line
+                  x1={p.x + 10}
+                  y1={p.y + p.h / 2}
+                  x2={p.x + p.w - 10}
+                  y2={p.y + p.h / 2}
+                  stroke="#f2f3ff"
+                  strokeWidth={p.h - 10}
+                  strokeDasharray="16,13"
+                  strokeLinecap="round"
+                  opacity={0.9}
+                />
+              </G>
             ))}
 
             {/* finish gate */}

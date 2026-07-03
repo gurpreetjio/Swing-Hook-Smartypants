@@ -67,9 +67,15 @@ for (let grade = 0; grade <= 8; grade++) {
     const vals = [
       ...lvl.anchors.flatMap((a) => [a.x, a.y]),
       ...lvl.airHazards.flatMap((h) => [h.x, h.y, h.r]),
+      ...lvl.planks.flatMap((p) => [p.x, p.y, p.w, p.h]),
       lvl.finishX,
     ];
     assert(vals.every(Number.isFinite), `g${grade} l${level}: non-finite geometry`);
+    if (level < 20) assert(lvl.planks.length === 0, `g${grade} l${level}: planks before level 20`);
+    if (level >= 45) assert(lvl.planks.length >= 2, `g${grade} l${level}: expected more planks (${lvl.planks.length})`);
+    for (const p of lvl.planks) {
+      assert(p.y > 200 && p.y < lvl.floorY - 60, `g${grade} l${level}: plank at bad height ${p.y}`);
+    }
   }
 }
 console.log('levelGen: ok');
