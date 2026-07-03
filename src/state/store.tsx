@@ -229,14 +229,15 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             }
           }
 
-          // advance the level regardless of math result (math gates rewards, not progress)
-          if (prog.level >= LEVELS_PER_GRADE && !prog.completed) {
+          // advance the level regardless of math result (math gates rewards, not
+          // progress). Finishing level 200 completes the grade, but the level
+          // counter keeps going forever into endless challenge levels.
+          if (prog.level === LEVELS_PER_GRADE && !prog.completed) {
             prog.completed = true;
             rewards.coins += 1000;
             rewards.gradeCompleted = true;
-          } else if (prog.level < LEVELS_PER_GRADE) {
-            prog.level += 1;
           }
+          prog.level += 1;
 
           p.coins += rewards.coins;
           p.xp += rewards.xp;

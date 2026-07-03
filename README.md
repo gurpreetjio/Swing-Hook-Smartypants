@@ -21,7 +21,13 @@ every round — answer fast for bonus rewards. No ads, ever.
   grade and get harder every 25 levels across the 200-level journey. Finish level
   200 to complete the grade and bank a 1000-coin bonus.
 - **Adventure** — classic swinging: hold to hook the glowing diamond, release to
-  fly. Unlimited plays.
+  fly. Unlimited plays. Levels follow the classic difficulty arc through **10
+  themed locations** (a new world every 20 levels):
+  - *Beginner (1–20)*: simple hooks and bounce pads, minimal obstacles
+  - *Intermediate (21–50)*: more bounce pads, tighter hooks, floor spikes
+  - *Advanced (51–100)*: longer gaps, moving obstacles
+  - *Expert (101–200)*: far-apart hooks, unpredictable pads, momentum-killing walls
+  - *Challenge (201+)*: endless levels with extreme, misleading hook angles
 - **Grapple Mode** — no pendulum: the hook *pulls you straight in*. Same worlds,
   totally different feel, its own progress track.
 - **Math Gate** — one timed question after every level. Correct = coins + XP +

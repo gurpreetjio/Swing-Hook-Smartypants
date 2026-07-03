@@ -60,13 +60,18 @@ export function AdventureFlow({ mode, onHome }: { mode: 'swing' | 'grapple'; onH
 
         {rewards.gradeCompleted && (
           <Card style={{ borderColor: theme.accent }}>
-            <Text style={styles.gradeDone}>🎓 GRADE COMPLETE! +1000 coin bonus. Pick a new grade from the home screen!</Text>
+            <Text style={styles.gradeDone}>
+              🎓 GRADE COMPLETE! +1000 coin bonus. Challenge levels start now — extreme hooks, forever. Or pick a new
+              grade from the home screen!
+            </Text>
           </Card>
         )}
 
-        {!rewards.gradeCompleted && (
-          <BigButton label="KEEP SWINGING →" color={theme.accent2} onPress={() => setReward(null)} />
-        )}
+        <BigButton
+          label={rewards.gradeCompleted ? 'ENTER CHALLENGE LEVELS →' : 'KEEP SWINGING →'}
+          color={theme.accent2}
+          onPress={() => setReward(null)}
+        />
         <BigButton label="Home" color={theme.panelLight} onPress={onHome} style={styles.homeBtn} />
       </View>
     );

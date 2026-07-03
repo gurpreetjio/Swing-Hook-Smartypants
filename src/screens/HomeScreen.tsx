@@ -64,13 +64,25 @@ export function HomeScreen({ go }: { go: (r: Route) => void }) {
 
       {/* modes */}
       <BigButton
-        label={adv.completed ? `✅ ${GRADE_LABELS[grade]} COMPLETE — Replay` : `ADVENTURE  •  Level ${adv.level}/${LEVELS_PER_GRADE}`}
-        sub={`${GRADE_LABELS[grade]} math • unlimited plays`}
+        label={
+          adv.level > LEVELS_PER_GRADE
+            ? `ADVENTURE  •  ⚡ CHALLENGE LV ${adv.level}`
+            : `ADVENTURE  •  Level ${adv.level}/${LEVELS_PER_GRADE}`
+        }
+        sub={
+          adv.completed
+            ? `🎓 ${GRADE_LABELS[grade]} complete • endless challenge levels`
+            : `${GRADE_LABELS[grade]} math • unlimited plays`
+        }
         color={theme.accent2}
         onPress={() => go({ name: 'adventure', mode: 'swing' })}
       />
       <BigButton
-        label={`GRAPPLE MODE  •  Level ${grap.level}/${LEVELS_PER_GRADE}`}
+        label={
+          grap.level > LEVELS_PER_GRADE
+            ? `GRAPPLE MODE  •  ⚡ CHALLENGE LV ${grap.level}`
+            : `GRAPPLE MODE  •  Level ${grap.level}/${LEVELS_PER_GRADE}`
+        }
         sub="No swinging — the hook pulls you straight!"
         color={theme.purple}
         onPress={() => go({ name: 'adventure', mode: 'grapple' })}

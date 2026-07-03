@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Svg, { Circle, G, Line, Polygon, Rect } from 'react-native-svg';
-import { generateLevel, WORLD } from '../game/levelGen';
+import { generateLevel, stageForLevel, STAGE_LABELS, themeForLevel, WORLD } from '../game/levelGen';
 import { findAnchor, GameMode, newSim, respawn, Sim, step } from '../game/physics';
 import { findRope, findSkin, findTrail } from '../data/cosmetics';
 import { useStore } from '../state/store';
@@ -46,6 +46,8 @@ export function GameScreen({
     () => generateLevel(grade, level, seedSalt ?? (mode === 'swing' ? 'adv' : 'grap')),
     [grade, level, seedSalt, mode]
   );
+  const world = themeForLevel(level);
+  const stage = stageForLevel(level);
 
   const simRef = useRef<Sim>(newSim(lvl));
   const holdingRef = useRef(false);
@@ -137,7 +139,7 @@ export function GameScreen({
   const tilt = Math.max(-28, Math.min(28, sim.vx * 0.02));
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, { backgroundColor: world.bg }]}>
       <View
         style={StyleSheet.absoluteFill}
         onStartShouldSetResponder={() => true}
@@ -162,8 +164,8 @@ export function GameScreen({
           })}
 
           {/* trampoline floor */}
-          <Rect x={0} y={lvl.floorY - cam.y} width={width} height={Math.max(0, height - (lvl.floorY - cam.y))} fill={theme.floor} />
-          <Rect x={0} y={lvl.floorY - cam.y} width={width} height={7} fill={theme.floorBounce} />
+          <Rect x={0} y={lvl.floorY - cam.y} width={width} height={Math.max(0, height - (lvl.floorY - cam.y))} fill={world.floor} />
+          <Rect x={0} y={lvl.floorY - cam.y} width={width} height={7} fill={world.floorBounce} />
 
           {/* spike strips */}
           <G x={-cam.x} y={-cam.y}>
@@ -175,23 +177,27 @@ export function GameScreen({
               <Polygon key={`sp${i}`} points={p} fill={theme.hazard} />
             ))}
 
-            {/* mid-air bumper planks */}
-            {lvl.planks.map((p, i) => (
-              <G key={`pl${i}`}>
-                <Rect x={p.x} y={p.y} width={p.w} height={p.h} rx={p.h / 2} fill="#0c0e28" />
-                <Line
-                  x1={p.x + 10}
-                  y1={p.y + p.h / 2}
-                  x2={p.x + p.w - 10}
-                  y2={p.y + p.h / 2}
-                  stroke="#f2f3ff"
-                  strokeWidth={p.h - 10}
-                  strokeDasharray="16,13"
-                  strokeLinecap="round"
-                  opacity={0.9}
-                />
-              </G>
-            ))}
+            {/* bumper planks: horizontal bounce pads and vertical walls */}
+            {lvl.planks.map((p, i) => {
+              const vertical = p.h > p.w;
+              const thin = Math.min(p.w, p.h);
+              return (
+                <G key={`pl${i}`}>
+                  <Rect x={p.x} y={p.y} width={p.w} height={p.h} rx={thin / 2} fill="#0c0e28" />
+                  <Line
+                    x1={vertical ? p.x + p.w / 2 : p.x + 10}
+                    y1={vertical ? p.y + 10 : p.y + p.h / 2}
+                    x2={vertical ? p.x + p.w / 2 : p.x + p.w - 10}
+                    y2={vertical ? p.y + p.h - 10 : p.y + p.h / 2}
+                    stroke="#f2f3ff"
+                    strokeWidth={thin - 10}
+                    strokeDasharray="16,13"
+                    strokeLinecap="round"
+                    opacity={0.9}
+                  />
+                </G>
+              );
+            })}
 
             {/* finish gate */}
             <Rect x={lvl.finishX} y={lvl.floorY - 560} width={10} height={560} fill={theme.finish} opacity={0.9} rx={4} />
@@ -210,10 +216,10 @@ export function GameScreen({
                 <G key={`a${i}`}>
                   {/* dashed targeting ring, like the original's hook halos */}
                   {!target && !active ? (
-                    <Circle cx={a.x} cy={a.y} r={26} fill="none" stroke={theme.anchor} strokeWidth={1.5} strokeDasharray="5,7" opacity={0.3} />
+                    <Circle cx={a.x} cy={a.y} r={26} fill="none" stroke={world.anchor} strokeWidth={1.5} strokeDasharray="5,7" opacity={0.3} />
                   ) : null}
                   {target ? <Circle cx={a.x} cy={a.y} r={22 + Math.sin(sim.t * 6) * 4} fill="none" stroke={theme.anchorActive} strokeWidth={2.5} strokeDasharray="6,5" opacity={0.9} /> : null}
-                  <Polygon points={pts} fill={active ? theme.anchorActive : theme.anchor} opacity={active ? 1 : 0.9} />
+                  <Polygon points={pts} fill={active ? theme.anchorActive : world.anchor} opacity={active ? 1 : 0.9} />
                   <Circle cx={a.x} cy={a.y} r={3.5} fill={theme.bgDeep} />
                 </G>
               );
@@ -283,7 +289,9 @@ export function GameScreen({
           <View style={styles.progTrack}>
             <View style={[styles.progFill, { width: `${Math.min(100, Math.max(0, (sim.x / lvl.finishX) * 100))}%` }]} />
           </View>
-          <Text style={styles.modeText}>{mode === 'swing' ? '🪝 SWING' : '🧲 GRAPPLE'}</Text>
+          <Text style={styles.modeText}>
+            {mode === 'swing' ? '🪝' : '🧲'} {world.name.toUpperCase()} • {STAGE_LABELS[stage].toUpperCase()}
+          </Text>
         </View>
         <View style={styles.retryBadge}>
           <Text style={styles.retryText}>↻ {sim.retries}</Text>
