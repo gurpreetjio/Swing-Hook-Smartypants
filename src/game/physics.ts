@@ -178,8 +178,9 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
     if (sim.vy < 0) sim.vy = -sim.vy * 0.4;
   }
 
-  // trampoline floor (deadly where spiked)
-  if (sim.y > level.floorY - WORLD.playerR) {
+  // trampoline floor (deadly where spiked, absent over gaps)
+  const overGap = level.floorGaps.some((g) => sim.x > g.x0 && sim.x < g.x1);
+  if (sim.y > level.floorY - WORLD.playerR && !overGap) {
     for (const s of level.floorSpikes) {
       if (sim.x >= s.x0 && sim.x <= s.x1) {
         sim.status = 'dead';
@@ -192,6 +193,12 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
     sim.vx *= 0.99;
   } else {
     sim.airtime += dt;
+  }
+
+  // fell into a floor gap — nothing to land on down there
+  if (sim.y > level.floorY + 150) {
+    sim.status = 'dead';
+    return;
   }
 
   // mid-air bumper planks: reflect the player away with a boost
@@ -230,10 +237,12 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
     }
   }
 
-  // spinning/oscillating hazards
+  // spinning/oscillating hazards (sweep vertically or horizontally)
   for (const h of level.airHazards) {
-    const hy = h.y + (h.oscAmp ? Math.sin(sim.t * h.oscSpeed + h.phase) * h.oscAmp : 0);
-    const d = Math.hypot(sim.x - h.x, sim.y - hy);
+    const osc = h.oscAmp ? Math.sin(sim.t * h.oscSpeed + h.phase) * h.oscAmp : 0;
+    const hx = h.x + (h.axis === 'x' ? osc : 0);
+    const hy = h.y + (h.axis === 'y' ? osc : 0);
+    const d = Math.hypot(sim.x - hx, sim.y - hy);
     if (d < h.r + WORLD.playerR - 2) {
       sim.status = 'dead';
       return;

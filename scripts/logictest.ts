@@ -83,17 +83,32 @@ for (let grade = 0; grade <= 8; grade++) {
     assert(vals.every(Number.isFinite), `g${grade} l${level}: non-finite geometry`);
 
     const pads = lvl.planks.filter((p) => p.w >= p.h);
-    const walls = lvl.planks.filter((p) => p.h > p.w);
+    const towers = lvl.planks.filter((p) => p.h > p.w && p.y + p.h >= lvl.floorY - 1);
+    const walls = lvl.planks.filter((p) => p.h > p.w && p.y + p.h < lvl.floorY - 1);
     if (level < 8) assert(lvl.planks.length === 0, `g${grade} l${level}: planks before level 8`);
     if (level >= 8) assert(pads.length >= 1, `g${grade} l${level}: no bounce pads`);
-    if (level < 101) assert(walls.length === 0, `g${grade} l${level}: walls before expert stage`);
+    if (level < 30) assert(towers.length === 0, `g${grade} l${level}: floor towers before level 30`);
+    if (level >= 30) assert(towers.length >= 1, `g${grade} l${level}: missing floor towers`);
+    if (level < 101) assert(walls.length === 0, `g${grade} l${level}: mid-air walls before expert stage`);
     if (level >= 101) assert(walls.length >= 1, `g${grade} l${level}: expert level missing walls`);
     if (level < 21) assert(lvl.floorSpikes.length === 0, `g${grade} l${level}: spikes before intermediate`);
     if (level < 51) assert(lvl.airHazards.length === 0, `g${grade} l${level}: moving obstacles before advanced`);
     if (level >= 51) assert(lvl.airHazards.every((h) => h.oscAmp > 0), `g${grade} l${level}: advanced hazards must move`);
+    if (level < 101) assert(lvl.airHazards.every((h) => h.axis === 'y'), `g${grade} l${level}: x-sweepers before expert`);
     for (const p of lvl.planks) {
       assert(p.y > 200 && p.y < lvl.floorY - 60, `g${grade} l${level}: plank at bad height ${p.y}`);
-      assert(p.y + p.h <= lvl.floorY - 30, `g${grade} l${level}: plank reaches into the floor`);
+      assert(p.y + p.h <= lvl.floorY, `g${grade} l${level}: plank reaches below the floor`);
+    }
+
+    // floor gaps: nothing to land on, only from advanced levels
+    if (level < 51) assert(lvl.floorGaps.length === 0, `g${grade} l${level}: gaps before advanced`);
+    if (level >= 51) assert(lvl.floorGaps.length >= 1, `g${grade} l${level}: advanced level missing floor gaps`);
+    for (const g of lvl.floorGaps) {
+      assert(g.x1 > g.x0 + 100 && g.x0 >= 700 && g.x1 <= lvl.finishX - 250, `g${grade} l${level}: bad gap [${Math.round(g.x0)}, ${Math.round(g.x1)}]`);
+      assert(!lvl.floorSpikes.some((s) => s.x0 < g.x1 && s.x1 > g.x0), `g${grade} l${level}: spikes inside a gap`);
+    }
+    for (let i = 1; i < lvl.floorGaps.length; i++) {
+      assert(lvl.floorGaps[i].x0 >= lvl.floorGaps[i - 1].x1, `g${grade} l${level}: overlapping gaps`);
     }
   }
 }
@@ -147,6 +162,20 @@ assert(
   `rapid taps should reel up much faster (tap minDist ${Math.round(tapDist)} vs hold ${Math.round(holdDist)})`
 );
 console.log(`tap-ratchet: tap climbs to ${Math.round(tapDist)}px vs hold ${Math.round(holdDist)}px — ok`);
+
+// ---- floor gaps are fatal: drop into one and there is nothing to land on ----
+{
+  const lvl = generateLevel(3, 91);
+  assert(lvl.floorGaps.length >= 1, 'level 91 should have a gap');
+  const g = lvl.floorGaps[0];
+  const sim = newSim(lvl);
+  sim.x = (g.x0 + g.x1) / 2;
+  sim.y = lvl.floorY - 20;
+  sim.vx = 0;
+  sim.vy = 300;
+  for (let t = 0; t < 2 && sim.status === 'alive'; t += 1 / 120) step(sim, lvl, 'swing', false, 1 / 120);
+  assert(sim.status === 'dead', `falling into a floor gap should be fatal (status=${sim.status})`);
+}
 
 // ---- physics: scripted bot must stay finite; expect forward progress & some wins ----
 let wins = 0;

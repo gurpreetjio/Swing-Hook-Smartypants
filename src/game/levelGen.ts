@@ -9,12 +9,19 @@ export interface AirHazard {
   x: number;
   y: number;
   r: number;
-  oscAmp: number; // vertical oscillation amplitude (0 = static)
+  oscAmp: number; // oscillation amplitude (0 = static)
   oscSpeed: number; // radians/sec
   phase: number;
+  axis: 'x' | 'y'; // sweep direction (horizontal movers arrive in expert)
 }
 
 export interface FloorSpikes {
+  x0: number;
+  x1: number;
+}
+
+// A hole in the floor: nothing to land on — fall in and it's a retry.
+export interface FloorGap {
   x0: number;
   x1: number;
 }
@@ -39,6 +46,7 @@ export interface Level {
   anchors: Anchor[];
   airHazards: AirHazard[];
   floorSpikes: FloorSpikes[];
+  floorGaps: FloorGap[];
   planks: Plank[];
   stars: Star[];
   startX: number;
@@ -129,12 +137,22 @@ export function generateLevel(grade: number, level: number, seedSalt = 'adv'): L
   const count = Math.min(20, 6 + Math.floor(Math.min(level, 240) / 12));
   const anchors: Anchor[] = [];
   let x = 380;
+  let ladders = 0;
   for (let i = 0; i < count; i++) {
     x += randInt(rng, p.gap[0], p.gap[1]);
     let y = randInt(rng, p.y[0], p.y[1]);
     // challenge levels: some hooks sit at misleading, extra-low angles
     if (stage === 'challenge' && rng() < 0.25) y = randInt(rng, 330, 430);
     anchors.push({ x, y });
+    // hook ladders: an occasional vertical column of hooks (from level 40)
+    if (level >= 40 && ladders < 2 && i > 1 && i < count - 2 && rng() < 0.15) {
+      ladders++;
+      const rungs = randInt(rng, 2, 3);
+      for (let rr = 1; rr <= rungs; rr++) {
+        const ry = y + rr * randInt(rng, 85, 110);
+        if (ry < 520) anchors.push({ x: x + rr * 2, y: ry });
+      }
+    }
   }
 
   const floorY = 640;
@@ -158,6 +176,15 @@ export function generateLevel(grade: number, level: number, seedSalt = 'adv'): L
     }
   }
 
+  // bumper towers rising from the floor: thread the needle (from level 30)
+  if (level >= 30) {
+    const n = Math.min(3, 1 + Math.floor((level - 30) / 45));
+    for (let i = 0; i < n; i++) {
+      const h = randInt(rng, 160, 300 + Math.round(diff * 80));
+      planks.push({ x: midBetween(rng) - 13, y: floorY - h, w: 26, h });
+    }
+  }
+
   // walls (vertical planks) that kill momentum: expert and challenge stages
   if (level >= 101) {
     const n = stage === 'challenge' ? Math.min(5, 2 + Math.floor((level - 200) / 60)) : Math.min(3, 1 + Math.floor((level - 100) / 50));
@@ -168,18 +195,37 @@ export function generateLevel(grade: number, level: number, seedSalt = 'adv'): L
     }
   }
 
-  // floor spikes ("red zones"): from intermediate on
+  // floor gaps — nothing to land on: from advanced levels
+  const floorGaps: FloorGap[] = [];
+  if (level >= 51) {
+    const n = Math.min(4, 1 + Math.floor((level - 51) / 40));
+    let attempts = 0;
+    while (floorGaps.length < n && attempts++ < 14) {
+      const cx = midBetween(rng);
+      const w = randInt(rng, 160, 260 + Math.round(diff * 120));
+      const x0 = Math.max(700, cx - w / 2);
+      const x1 = Math.min(finishX - 250, cx + w / 2);
+      if (x1 - x0 > 100 && !floorGaps.some((g) => x0 < g.x1 + 120 && x1 > g.x0 - 120)) {
+        floorGaps.push({ x0, x1 });
+      }
+    }
+    floorGaps.sort((a, b) => a.x0 - b.x0);
+  }
+
+  // floor spikes ("red zones"): from intermediate on; never inside a gap
   const floorSpikes: FloorSpikes[] = [];
   if (level >= 21) {
     const n = Math.min(5, 1 + Math.floor((level - 21) / 35));
     for (let i = 0; i < n; i++) {
       const a = anchors[randInt(rng, 1, anchors.length - 1)];
       const w = randInt(rng, 120, 200 + Math.round(diff * 120));
-      floorSpikes.push({ x0: a.x - w / 2, x1: a.x + w / 2 });
+      const s = { x0: a.x - w / 2, x1: a.x + w / 2 };
+      if (!floorGaps.some((g) => s.x0 < g.x1 && s.x1 > g.x0)) floorSpikes.push(s);
     }
   }
 
-  // moving obstacles: from advanced on, always oscillating
+  // moving obstacles: from advanced on, always oscillating; expert levels add
+  // horizontal sweepers
   const airHazards: AirHazard[] = [];
   if (level >= 51) {
     const n = Math.min(6, 1 + Math.floor((level - 51) / 25));
@@ -191,6 +237,7 @@ export function generateLevel(grade: number, level: number, seedSalt = 'adv'): L
         oscAmp: randInt(rng, 40, 120),
         oscSpeed: 1 + rng() * (1.4 + diff),
         phase: rng() * Math.PI * 2,
+        axis: level >= 101 && rng() < 0.5 ? 'x' : 'y',
       });
     }
   }
@@ -209,6 +256,7 @@ export function generateLevel(grade: number, level: number, seedSalt = 'adv'): L
     anchors,
     airHazards,
     floorSpikes,
+    floorGaps,
     planks,
     stars,
     startX: 60,

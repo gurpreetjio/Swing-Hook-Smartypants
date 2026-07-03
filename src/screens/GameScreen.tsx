@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import Svg, { Circle, G, Line, Polygon, Rect } from 'react-native-svg';
+import Svg, { Circle, G, Line, Polygon, Rect, Text as SvgText } from 'react-native-svg';
 import { generateLevel, stageForLevel, STAGE_LABELS, themeForLevel, WORLD } from '../game/levelGen';
 import { findAnchor, GameMode, newSim, respawn, Sim, step } from '../game/physics';
 import { findRope, findSkin, findTrail } from '../data/cosmetics';
@@ -16,6 +16,19 @@ export interface RoundStats extends MathGateResult {
 }
 
 const TRAIL_LEN = 16;
+const CONFETTI_COLORS = ['#ffd166', '#06d6a0', '#ef476f', '#4cc9f0', '#b388ff', '#ffffff', '#ff9e64'];
+
+interface ConfettiBit {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  rot: number;
+  vr: number;
+  c: string;
+  w: number;
+  h: number;
+}
 
 export function GameScreen({
   mode,
@@ -41,6 +54,7 @@ export function GameScreen({
   const skin = findSkin(profile.equippedSkin);
   const rope = findRope(profile.equippedRope);
   const trail = findTrail(profile.equippedTrail);
+  const trailEmojis = trail.emoji;
 
   const lvl = useMemo(
     () => generateLevel(grade, level, seedSalt ?? (mode === 'swing' ? 'adv' : 'grap')),
@@ -54,8 +68,10 @@ export function GameScreen({
   const camRef = useRef({ x: 0, y: 0 });
   const trailRef = useRef<{ x: number; y: number }[]>([]);
   const deadFlashRef = useRef(0);
+  const confettiRef = useRef<ConfettiBit[]>([]);
+  const clearedUntilRef = useRef(0);
   const [, setFrame] = useState(0);
-  const [phase, setPhase] = useState<'play' | 'math'>('play');
+  const [phase, setPhase] = useState<'play' | 'cleared' | 'math'>('play');
   const phaseRef = useRef(phase);
   phaseRef.current = phase;
   const [hooksUsed, setHooksUsed] = useState(0);
@@ -79,6 +95,19 @@ export function GameScreen({
       if (!last) last = now;
       let dt = Math.min(0.033, (now - last) / 1000);
       last = now;
+
+      // celebration: freeze the sim, rain confetti, then open the math gate
+      if (phaseRef.current === 'cleared') {
+        for (const c of confettiRef.current) {
+          c.vy += 820 * dt;
+          c.x += c.vx * dt;
+          c.y += c.vy * dt;
+          c.rot += c.vr * dt;
+        }
+        if (now >= clearedUntilRef.current) setPhase('math');
+        setFrame((f) => (f + 1) & 1023);
+        return;
+      }
       if (phaseRef.current !== 'play') return;
 
       const sim = simRef.current;
@@ -98,7 +127,23 @@ export function GameScreen({
         const status = ((s: Sim) => s.status)(sim);
         if (status === 'dead') deadFlashRef.current = 1;
         if (status === 'win') {
-          setPhase('math');
+          const bits: ConfettiBit[] = [];
+          for (let i = 0; i < 46; i++) {
+            bits.push({
+              x: Math.random() * width,
+              y: height * 0.55 + Math.random() * height * 0.45,
+              vx: (Math.random() - 0.5) * 460,
+              vy: -(380 + Math.random() * 640),
+              rot: Math.random() * 360,
+              vr: (Math.random() - 0.5) * 760,
+              c: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+              w: 8 + Math.random() * 8,
+              h: 5 + Math.random() * 5,
+            });
+          }
+          confettiRef.current = bits;
+          clearedUntilRef.current = now + 1600;
+          setPhase('cleared');
         }
         const t = trailRef.current;
         t.push({ x: sim.x, y: sim.y });
@@ -138,6 +183,19 @@ export function GameScreen({
   const hookedAnchor = sim.hooked !== null ? lvl.anchors[sim.hooked] : null;
   const tilt = Math.max(-28, Math.min(28, sim.vx * 0.02));
 
+  // visible floor pieces: the full span minus any gaps (nothing to land on there)
+  const floorSegs: { x0: number; x1: number }[] = [];
+  {
+    let cur = cam.x - 60;
+    const end = cam.x + width + 60;
+    for (const g of lvl.floorGaps) {
+      if (g.x1 < cur || g.x0 > end) continue;
+      if (g.x0 > cur) floorSegs.push({ x0: cur, x1: g.x0 });
+      cur = Math.max(cur, g.x1);
+    }
+    if (cur < end) floorSegs.push({ x0: cur, x1: end });
+  }
+
   return (
     <View style={[styles.root, { backgroundColor: world.bg }]}>
       <View
@@ -163,15 +221,16 @@ export function GameScreen({
             return <Circle key={`st${i}`} cx={sx} cy={sy} r={s.r} fill="#ffffff" opacity={s.o} />;
           })}
 
-          {/* trampoline floor */}
-          <Rect x={0} y={lvl.floorY - cam.y} width={width} height={Math.max(0, height - (lvl.floorY - cam.y))} fill={world.floor} />
-          <Rect x={0} y={lvl.floorY - cam.y} width={width} height={7} fill={world.floorBounce} />
-
-          {/* spike strips */}
           <G x={-cam.x} y={-cam.y}>
-            {/* striped plank band along the floor top */}
-            <Line x1={cam.x - 60} y1={lvl.floorY + 8} x2={cam.x + width + 60} y2={lvl.floorY + 8} stroke="#0c0e28" strokeWidth={16} />
-            <Line x1={cam.x - 60} y1={lvl.floorY + 8} x2={cam.x + width + 60} y2={lvl.floorY + 8} stroke="#f2f3ff" strokeWidth={7} strokeDasharray="26,20" opacity={0.9} />
+            {/* trampoline floor in striped-plank segments, broken by gaps */}
+            {floorSegs.map((s, i) => (
+              <G key={`fs${i}`}>
+                <Rect x={s.x0} y={lvl.floorY} width={s.x1 - s.x0} height={Math.max(0, cam.y + height - lvl.floorY)} fill={world.floor} />
+                <Rect x={s.x0} y={lvl.floorY} width={s.x1 - s.x0} height={7} fill={world.floorBounce} />
+                <Line x1={s.x0 + 6} y1={lvl.floorY + 8} x2={s.x1 - 6} y2={lvl.floorY + 8} stroke="#0c0e28" strokeWidth={16} />
+                <Line x1={s.x0 + 12} y1={lvl.floorY + 8} x2={s.x1 - 12} y2={lvl.floorY + 8} stroke="#f2f3ff" strokeWidth={7} strokeDasharray="26,20" opacity={0.9} />
+              </G>
+            ))}
 
             {spikePolys.map((p, i) => (
               <Polygon key={`sp${i}`} points={p} fill={theme.hazard} />
@@ -225,13 +284,15 @@ export function GameScreen({
               );
             })}
 
-            {/* air hazards */}
+            {/* air hazards (vertical or horizontal sweepers) */}
             {lvl.airHazards.map((h, i) => {
-              const hy = h.y + (h.oscAmp ? Math.sin(sim.t * h.oscSpeed + h.phase) * h.oscAmp : 0);
+              const osc = h.oscAmp ? Math.sin(sim.t * h.oscSpeed + h.phase) * h.oscAmp : 0;
+              const hx = h.x + (h.axis === 'x' ? osc : 0);
+              const hy = h.y + (h.axis === 'y' ? osc : 0);
               return (
                 <G key={`h${i}`}>
-                  <Circle cx={h.x} cy={hy} r={h.r} fill={theme.hazard} opacity={0.9} />
-                  <Circle cx={h.x} cy={hy} r={h.r * 0.55} fill={theme.bgDeep} opacity={0.6} />
+                  <Circle cx={hx} cy={hy} r={h.r} fill={theme.hazard} opacity={0.9} />
+                  <Circle cx={hx} cy={hy} r={h.r * 0.55} fill={theme.bgDeep} opacity={0.6} />
                 </G>
               );
             })}
@@ -250,27 +311,60 @@ export function GameScreen({
               />
             ) : null}
 
-            {/* trail */}
-            {trail.colors.length > 0 &&
-              trailRef.current.map((p, i) => {
-                const f = i / TRAIL_LEN;
-                return (
-                  <Circle
-                    key={`t${i}`}
-                    cx={p.x}
-                    cy={p.y + 14}
-                    r={2 + f * 6}
-                    fill={trail.colors[i % trail.colors.length]}
-                    opacity={f * 0.5}
-                  />
-                );
-              })}
+            {/* trail: object followers (parachute pals etc.) or classic dots */}
+            {trailEmojis
+              ? trailRef.current.map((p, i) => {
+                  if (i % 3 !== 0) return null;
+                  const f = i / TRAIL_LEN;
+                  return (
+                    <SvgText
+                      key={`t${i}`}
+                      x={p.x}
+                      y={p.y + 24}
+                      fontSize={10 + f * 12}
+                      opacity={0.3 + f * 0.65}
+                      textAnchor="middle"
+                    >
+                      {trailEmojis[((i / 3) | 0) % trailEmojis.length]}
+                    </SvgText>
+                  );
+                })
+              : trail.colors.length > 0 &&
+                trailRef.current.map((p, i) => {
+                  const f = i / TRAIL_LEN;
+                  return (
+                    <Circle
+                      key={`t${i}`}
+                      cx={p.x}
+                      cy={p.y + 14}
+                      r={2 + f * 6}
+                      fill={trail.colors[i % trail.colors.length]}
+                      opacity={f * 0.5}
+                    />
+                  );
+                })}
 
             {/* player */}
             <G x={sim.x} y={sim.y} rotation={tilt}>
               <DoodleFigure skin={skin} pose={sim.hooked !== null ? 'hooked' : 'fly'} />
             </G>
           </G>
+
+          {/* confetti burst (screen space) */}
+          {phase === 'cleared' &&
+            confettiRef.current.map((c, i) => (
+              <Rect
+                key={`cf${i}`}
+                x={c.x}
+                y={c.y}
+                width={c.w}
+                height={c.h}
+                rx={2}
+                fill={c.c}
+                rotation={c.rot}
+                origin={`${c.x}, ${c.y}`}
+              />
+            ))}
         </Svg>
 
         {/* death flash */}
@@ -303,6 +397,13 @@ export function GameScreen({
           <Text style={styles.hintText}>
             {mode === 'swing' ? 'HOLD anywhere to hook the glowing diamond\nRELEASE to fly!' : 'HOLD to grapple — it pulls you straight in.\nRELEASE to launch!'}
           </Text>
+        </View>
+      )}
+
+      {phase === 'cleared' && (
+        <View pointerEvents="none" style={styles.clearedWrap}>
+          <Text style={styles.clearedText}>LEVEL CLEARED!</Text>
+          <Text style={styles.clearedSub}>⚡ MATH GATE INCOMING…</Text>
         </View>
       )}
 
@@ -356,6 +457,17 @@ const styles = StyleSheet.create({
     borderColor: theme.line,
   },
   retryText: { color: theme.textDim, fontWeight: '800', fontSize: 13 },
+  clearedWrap: { position: 'absolute', top: '22%', left: 0, right: 0, alignItems: 'center' },
+  clearedText: {
+    color: theme.text,
+    fontSize: 38,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+    textShadowColor: '#00000088',
+    textShadowOffset: { width: 0, height: 3 },
+    textShadowRadius: 8,
+  },
+  clearedSub: { color: theme.accent, fontSize: 14, fontWeight: '900', letterSpacing: 3, marginTop: 8 },
   hint: { position: 'absolute', bottom: 90, left: 0, right: 0, alignItems: 'center' },
   hintText: {
     color: theme.text,
