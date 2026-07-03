@@ -13,6 +13,12 @@ export interface Sim {
   retries: number;
   airtime: number; // seconds off the floor while alive (style bonus)
   status: 'alive' | 'dead' | 'win';
+  lastHooked: number | null; // for the tap-ratchet: which anchor we just released
+  lastReleaseT: number;
+  reelBoostUntil: number; // fast reel-in window after a quick re-tap
+  dashUntil: number; // portal zoom window: speed cap is lifted
+  portalCdUntil: number; // don't re-trigger the same portal instantly
+  consumed: Set<number>; // one-shot anchors (red hooks) already used this attempt
 }
 
 export function newSim(level: Level): Sim {
@@ -27,6 +33,12 @@ export function newSim(level: Level): Sim {
     retries: 0,
     airtime: 0,
     status: 'alive',
+    lastHooked: null,
+    lastReleaseT: -1e9,
+    reelBoostUntil: 0,
+    dashUntil: 0,
+    portalCdUntil: 0,
+    consumed: new Set(),
   };
 }
 
@@ -38,6 +50,12 @@ export function respawn(sim: Sim, level: Level): void {
   sim.hooked = null;
   sim.status = 'alive';
   sim.retries += 1;
+  sim.lastHooked = null;
+  sim.lastReleaseT = -1e9;
+  sim.reelBoostUntil = 0;
+  sim.dashUntil = 0;
+  sim.portalCdUntil = 0;
+  sim.consumed.clear();
 }
 
 /**
@@ -51,6 +69,7 @@ export function findAnchor(sim: Sim, level: Level, mode: GameMode): number | nul
   let best = -1;
   let bestScore = -Infinity;
   for (let i = 0; i < level.anchors.length; i++) {
+    if (sim.consumed.has(i)) continue; // spent red hooks are gone
     const a = level.anchors[i];
     const dx = a.x - sim.x;
     const dy = a.y - sim.y;
@@ -85,11 +104,30 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
     if (idx !== null) {
       sim.hooked = idx;
       const a = level.anchors[idx];
+      const d = Math.hypot(a.x - sim.x, a.y - sim.y);
       // attach at the current distance (never shorter — that would teleport the
       // player onto the rope circle); long ropes reel in over time instead
-      sim.ropeLen = Math.max(80, Math.hypot(a.x - sim.x, a.y - sim.y));
+      sim.ropeLen = Math.max(80, d);
+      // tap-ratchet: quickly re-tapping the same hook climbs the rope — a fast
+      // reel window plus a kick toward the anchor, so rapid taps pull you up
+      // much faster than holding
+      if (idx === sim.lastHooked && sim.t - sim.lastReleaseT < 0.45 && d > 1) {
+        sim.reelBoostUntil = sim.t + 0.32;
+        sim.vx += ((a.x - sim.x) / d) * 260;
+        sim.vy += ((a.y - sim.y) / d) * 260;
+      }
+      // red hooks sling you back the way you came from, then vanish —
+      // one use per attempt, and the rope never actually holds
+      if (a.kind === 'red') {
+        sim.vx = -sim.vx * 1.15;
+        sim.vy *= 0.9;
+        sim.consumed.add(idx);
+        sim.hooked = null;
+      }
     }
   } else if (!holding && sim.hooked !== null) {
+    sim.lastHooked = sim.hooked;
+    sim.lastReleaseT = sim.t;
     sim.hooked = null;
   }
 
@@ -110,19 +148,36 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
   }
 
   if (sim.hooked !== null && mode === 'swing') {
-    // energy pump while swinging, like the original's accelerating swings
-    const boost = 1 + 0.35 * dt;
+    // energy pump while swinging, like the original's accelerating swings;
+    // green hooks turbo-charge the spin
+    const pump = level.anchors[sim.hooked].kind === 'green' ? 1.5 : 0.35;
+    const boost = 1 + pump * dt;
     sim.vx *= boost;
     sim.vy *= boost;
     // reel-in adds momentum and keeps arcs tight; long ropes (grabbed from far
-    // away) reel much faster so the swoop recovers instead of dragging
-    const reel = 26 + Math.max(0, sim.ropeLen - 340) * 1.4;
+    // away) reel much faster so the swoop recovers instead of dragging, and the
+    // tap-ratchet window reels hardest of all
+    const base = sim.t < sim.reelBoostUntil ? 780 : 26;
+    const reel = base + Math.max(0, sim.ropeLen - 340) * 1.4;
     sim.ropeLen = Math.max(90, sim.ropeLen - reel * dt);
+  }
+
+  // portals: zoom you really fast to the right (Adventure run only)
+  for (const pt of level.portals) {
+    if (sim.t < sim.portalCdUntil) break;
+    if (Math.hypot(sim.x - pt.x, sim.y - pt.y) < pt.r + WORLD.playerR) {
+      sim.vx = 2200;
+      sim.vy *= 0.3;
+      sim.dashUntil = sim.t + 0.55;
+      sim.portalCdUntil = sim.t + 0.9;
+      sim.hooked = null; // the zoom rips you off the rope
+      break;
+    }
   }
 
   const cap = mode === 'swing' ? WORLD.maxSpeed : WORLD.grappleMaxSpeed;
   const sp = Math.hypot(sim.vx, sim.vy);
-  if (sp > cap) {
+  if (sp > cap && sim.t >= sim.dashUntil) {
     sim.vx = (sim.vx / sp) * cap;
     sim.vy = (sim.vy / sp) * cap;
   }
@@ -156,8 +211,9 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
     if (sim.vy < 0) sim.vy = -sim.vy * 0.4;
   }
 
-  // trampoline floor (deadly where spiked)
-  if (sim.y > level.floorY - WORLD.playerR) {
+  // trampoline floor (deadly where spiked, absent over gaps)
+  const overGap = level.floorGaps.some((g) => sim.x > g.x0 && sim.x < g.x1);
+  if (sim.y > level.floorY - WORLD.playerR && !overGap) {
     for (const s of level.floorSpikes) {
       if (sim.x >= s.x0 && sim.x <= s.x1) {
         sim.status = 'dead';
@@ -170,6 +226,12 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
     sim.vx *= 0.99;
   } else {
     sim.airtime += dt;
+  }
+
+  // fell into a floor gap — nothing to land on down there
+  if (sim.y > level.floorY + 150) {
+    sim.status = 'dead';
+    return;
   }
 
   // mid-air bumper planks: reflect the player away with a boost
@@ -208,10 +270,12 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
     }
   }
 
-  // spinning/oscillating hazards
+  // spinning/oscillating hazards (sweep vertically or horizontally)
   for (const h of level.airHazards) {
-    const hy = h.y + (h.oscAmp ? Math.sin(sim.t * h.oscSpeed + h.phase) * h.oscAmp : 0);
-    const d = Math.hypot(sim.x - h.x, sim.y - hy);
+    const osc = h.oscAmp ? Math.sin(sim.t * h.oscSpeed + h.phase) * h.oscAmp : 0;
+    const hx = h.x + (h.axis === 'x' ? osc : 0);
+    const hy = h.y + (h.axis === 'y' ? osc : 0);
+    const d = Math.hypot(sim.x - hx, sim.y - hy);
     if (d < h.r + WORLD.playerR - 2) {
       sim.status = 'dead';
       return;

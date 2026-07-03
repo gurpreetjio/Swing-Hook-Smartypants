@@ -2,8 +2,8 @@
  * Run: npx tsc -p tsconfig.test.json && node .test-build/scripts/logictest.js
  */
 import { generateQuestion } from '../src/math/mathGen';
-import { generateLevel } from '../src/game/levelGen';
-import { findAnchor, newSim, step } from '../src/game/physics';
+import { generateAdventureLevel, generateLevel, Level, stageForLevel, themeForLevel, THEMES, WORLD } from '../src/game/levelGen';
+import { findAnchor, newSim, respawn, step } from '../src/game/physics';
 import { weeklyRotation } from '../src/data/cosmetics';
 import { rankForXp, RANKS } from '../src/data/ranks';
 import { isoWeekKey, mulberry32 } from '../src/game/rng';
@@ -55,9 +55,19 @@ for (let seed = 0; seed < 2000; seed++) {
   );
 }
 
-// ---- level generator ----
+// ---- stages & themes ----
+assert(stageForLevel(1) === 'beginner' && stageForLevel(20) === 'beginner', 'beginner range wrong');
+assert(stageForLevel(21) === 'intermediate' && stageForLevel(50) === 'intermediate', 'intermediate range wrong');
+assert(stageForLevel(51) === 'advanced' && stageForLevel(100) === 'advanced', 'advanced range wrong');
+assert(stageForLevel(101) === 'expert' && stageForLevel(200) === 'expert', 'expert range wrong');
+assert(stageForLevel(201) === 'challenge' && stageForLevel(9999) === 'challenge', 'challenge range wrong');
+assert(THEMES.length === 10 && new Set(THEMES.map((t) => t.name)).size === 10, 'need 10 unique locations');
+assert(themeForLevel(1).name !== themeForLevel(21).name, 'world should change every 20 levels');
+assert(themeForLevel(1).name === themeForLevel(201).name, 'worlds should loop after 200');
+
+// ---- level generator (including endless challenge levels) ----
 for (let grade = 0; grade <= 8; grade++) {
-  for (let level = 1; level <= 200; level += 7) {
+  for (let level = 1; level <= 320; level += 7) {
     const lvl = generateLevel(grade, level);
     assert(lvl.anchors.length >= 6, `g${grade} l${level}: too few anchors`);
     for (let i = 1; i < lvl.anchors.length; i++) {
@@ -71,17 +81,41 @@ for (let grade = 0; grade <= 8; grade++) {
       lvl.finishX,
     ];
     assert(vals.every(Number.isFinite), `g${grade} l${level}: non-finite geometry`);
-    if (level < 20) assert(lvl.planks.length === 0, `g${grade} l${level}: planks before level 20`);
-    if (level >= 45) assert(lvl.planks.length >= 2, `g${grade} l${level}: expected more planks (${lvl.planks.length})`);
+
+    const pads = lvl.planks.filter((p) => p.w >= p.h);
+    const towers = lvl.planks.filter((p) => p.h > p.w && p.y + p.h >= lvl.floorY - 1);
+    const walls = lvl.planks.filter((p) => p.h > p.w && p.y + p.h < lvl.floorY - 1);
+    if (level < 8) assert(lvl.planks.length === 0, `g${grade} l${level}: planks before level 8`);
+    if (level >= 8) assert(pads.length >= 1, `g${grade} l${level}: no bounce pads`);
+    if (level < 30) assert(towers.length === 0, `g${grade} l${level}: floor towers before level 30`);
+    if (level >= 30) assert(towers.length >= 1, `g${grade} l${level}: missing floor towers`);
+    if (level < 101) assert(walls.length === 0, `g${grade} l${level}: mid-air walls before expert stage`);
+    if (level >= 101) assert(walls.length >= 1, `g${grade} l${level}: expert level missing walls`);
+    if (level < 21) assert(lvl.floorSpikes.length === 0, `g${grade} l${level}: spikes before intermediate`);
+    if (level < 51) assert(lvl.airHazards.length === 0, `g${grade} l${level}: moving obstacles before advanced`);
+    if (level >= 51) assert(lvl.airHazards.every((h) => h.oscAmp > 0), `g${grade} l${level}: advanced hazards must move`);
+    if (level < 101) assert(lvl.airHazards.every((h) => h.axis === 'y'), `g${grade} l${level}: x-sweepers before expert`);
     for (const p of lvl.planks) {
       assert(p.y > 200 && p.y < lvl.floorY - 60, `g${grade} l${level}: plank at bad height ${p.y}`);
+      assert(p.y + p.h <= lvl.floorY, `g${grade} l${level}: plank reaches below the floor`);
+    }
+
+    // floor gaps: nothing to land on, only from advanced levels
+    if (level < 51) assert(lvl.floorGaps.length === 0, `g${grade} l${level}: gaps before advanced`);
+    if (level >= 51) assert(lvl.floorGaps.length >= 1, `g${grade} l${level}: advanced level missing floor gaps`);
+    for (const g of lvl.floorGaps) {
+      assert(g.x1 > g.x0 + 100 && g.x0 >= 700 && g.x1 <= lvl.finishX - 250, `g${grade} l${level}: bad gap [${Math.round(g.x0)}, ${Math.round(g.x1)}]`);
+      assert(!lvl.floorSpikes.some((s) => s.x0 < g.x1 && s.x1 > g.x0), `g${grade} l${level}: spikes inside a gap`);
+    }
+    for (let i = 1; i < lvl.floorGaps.length; i++) {
+      assert(lvl.floorGaps[i].x0 >= lvl.floorGaps[i - 1].x1, `g${grade} l${level}: overlapping gaps`);
     }
   }
 }
 console.log('levelGen: ok');
 
 // ---- regression: a tap must ALWAYS find a hook while any anchor is ahead ----
-for (let level = 1; level <= 200; level += 13) {
+for (let level = 1; level <= 260; level += 13) {
   for (const mode of ['swing', 'grapple'] as const) {
     const lvl = generateLevel(4, level, mode === 'swing' ? 'adv' : 'grap');
     const lastX = lvl.anchors[lvl.anchors.length - 1].x;
@@ -102,6 +136,134 @@ for (let level = 1; level <= 200; level += 13) {
   }
 }
 console.log('findAnchor: always hookable, ok');
+
+// ---- tap-ratchet: rapid tapping must climb the rope faster than holding ----
+function reelTest(tapping: boolean): number {
+  const lvl = generateLevel(0, 1);
+  const a = lvl.anchors[0];
+  const sim = newSim(lvl);
+  sim.x = a.x - 10;
+  sim.y = Math.min(lvl.floorY - 40, a.y + 420);
+  sim.vx = 0;
+  sim.vy = 0;
+  let minD = Infinity;
+  const dt = 1 / 120;
+  for (let t = 0; t < 2.5 && sim.status === 'alive'; t += dt) {
+    const holding = tapping ? t % 0.15 < 0.09 : true; // ~6.7 taps/sec vs constant hold
+    step(sim, lvl, 'swing', holding, dt);
+    minD = Math.min(minD, Math.hypot(sim.x - a.x, sim.y - a.y));
+  }
+  return minD;
+}
+const holdDist = reelTest(false);
+const tapDist = reelTest(true);
+assert(
+  tapDist < holdDist - 80,
+  `rapid taps should reel up much faster (tap minDist ${Math.round(tapDist)} vs hold ${Math.round(holdDist)})`
+);
+console.log(`tap-ratchet: tap climbs to ${Math.round(tapDist)}px vs hold ${Math.round(holdDist)}px — ok`);
+
+// ---- adventure run: endless course with portals and special hooks ----
+for (const seed of [12345, 999, 424242]) {
+  const alvl = generateAdventureLevel(seed);
+  assert(alvl.anchors.length >= 200, `adventure ${seed}: too few anchors`);
+  for (let i = 1; i < alvl.anchors.length; i++) {
+    assert(alvl.anchors[i].x > alvl.anchors[i - 1].x, `adventure ${seed}: anchors not increasing`);
+  }
+  assert(alvl.anchors.some((a) => a.kind === 'green'), `adventure ${seed}: no green hooks`);
+  assert(alvl.anchors.some((a) => a.kind === 'red'), `adventure ${seed}: no red hooks`);
+  assert(alvl.portals.length >= 10, `adventure ${seed}: too few portals (${alvl.portals.length})`);
+  for (let i = 1; i < alvl.floorGaps.length; i++) {
+    assert(alvl.floorGaps[i].x0 >= alvl.floorGaps[i - 1].x1, `adventure ${seed}: overlapping gaps`);
+  }
+  assert(
+    !alvl.floorSpikes.some((s) => alvl.floorGaps.some((g) => s.x0 < g.x1 && s.x1 > g.x0)),
+    `adventure ${seed}: spikes inside gaps`
+  );
+}
+console.log('adventure gen: ok');
+
+// synthetic mini-level for special-hook physics
+function makeLevel(anchors: Level['anchors'], portals: Level['portals'] = []): Level {
+  return {
+    anchors,
+    portals,
+    airHazards: [],
+    floorSpikes: [],
+    floorGaps: [],
+    planks: [],
+    stars: [],
+    startX: 60,
+    startY: 340,
+    finishX: 1e9,
+    floorY: 640,
+    ceilY: -80,
+  };
+}
+
+// red hook: slings you the opposite direction, then disappears (one use)
+{
+  const lvl = makeLevel([{ x: 500, y: 100, kind: 'red' }]);
+  const sim = newSim(lvl);
+  sim.x = 430;
+  sim.y = 300;
+  sim.vx = 400;
+  sim.vy = 0;
+  step(sim, lvl, 'swing', true, 1 / 120);
+  assert(sim.vx < 0, `red hook should reverse vx (got ${Math.round(sim.vx)})`);
+  assert(sim.hooked === null, 'red hook should never hold the rope');
+  assert(sim.consumed.has(0), 'red hook should be consumed after use');
+  assert(findAnchor(sim, lvl, 'swing') === null, 'consumed red hook should be unhookable');
+  respawn(sim, lvl);
+  assert(findAnchor(sim, lvl, 'swing') !== null, 'red hook should come back after a respawn');
+}
+
+// green hook: pumps speed faster than a normal hook
+{
+  const speeds: number[] = [];
+  for (const kind of [undefined, 'green' as const]) {
+    const lvl = makeLevel([kind ? { x: 500, y: 100, kind } : { x: 500, y: 100 }]);
+    const sim = newSim(lvl);
+    sim.x = 500;
+    sim.y = 350;
+    sim.vx = 300;
+    sim.vy = 0;
+    for (let t = 0; t < 0.5; t += 1 / 120) step(sim, lvl, 'swing', true, 1 / 120);
+    speeds.push(Math.hypot(sim.vx, sim.vy));
+  }
+  assert(speeds[1] > speeds[0] + 80, `green hook should spin faster (green ${Math.round(speeds[1])} vs normal ${Math.round(speeds[0])})`);
+}
+
+// portal: zooms you right, past the normal speed cap
+{
+  const lvl = makeLevel([], [{ x: 800, y: 340, r: 34 }]);
+  const sim = newSim(lvl);
+  sim.x = 700;
+  sim.y = 340;
+  sim.vx = 400;
+  sim.vy = 0;
+  let maxSp = 0;
+  for (let t = 0; t < 0.6; t += 1 / 120) {
+    step(sim, lvl, 'swing', false, 1 / 120);
+    maxSp = Math.max(maxSp, Math.hypot(sim.vx, sim.vy));
+  }
+  assert(maxSp > WORLD.maxSpeed + 200, `portal should exceed the speed cap (max ${Math.round(maxSp)})`);
+}
+console.log('special hooks & portals: ok');
+
+// ---- floor gaps are fatal: drop into one and there is nothing to land on ----
+{
+  const lvl = generateLevel(3, 91);
+  assert(lvl.floorGaps.length >= 1, 'level 91 should have a gap');
+  const g = lvl.floorGaps[0];
+  const sim = newSim(lvl);
+  sim.x = (g.x0 + g.x1) / 2;
+  sim.y = lvl.floorY - 20;
+  sim.vx = 0;
+  sim.vy = 300;
+  for (let t = 0; t < 2 && sim.status === 'alive'; t += 1 / 120) step(sim, lvl, 'swing', false, 1 / 120);
+  assert(sim.status === 'dead', `falling into a floor gap should be fatal (status=${sim.status})`);
+}
 
 // ---- physics: scripted bot must stay finite; expect forward progress & some wins ----
 let wins = 0;

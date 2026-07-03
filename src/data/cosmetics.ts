@@ -18,7 +18,8 @@ export interface Rope {
 export interface Trail {
   id: string;
   name: string;
-  colors: string[]; // cycled along the trail
+  colors: string[]; // cycled along the trail (dot trails)
+  emoji?: string[]; // object trails: little followers drawn instead of dots
   cost: number;
 }
 
@@ -89,6 +90,13 @@ export const TRAILS: Trail[] = [
   { id: 't_sparkle', name: 'Stardust', colors: ['#ffd700', '#ffffff'], cost: 250 },
   { id: 't_toxic', name: 'Toxic', colors: ['#aeea00', '#39ff14'], cost: 200 },
   { id: 't_violet', name: 'Violet Haze', colors: ['#b388ff', '#f72585'], cost: 250 },
+  // object trails — a parade of little followers behind the Doodle
+  { id: 't_chutes', name: 'Parachute Pals', colors: [], emoji: ['🪂'], cost: 350 },
+  { id: 't_balloons', name: 'Balloon Party', colors: [], emoji: ['🎈'], cost: 300 },
+  { id: 't_starchain', name: 'Star Chain', colors: [], emoji: ['⭐', '✨'], cost: 250 },
+  { id: 't_hearts', name: 'Heart Stream', colors: [], emoji: ['💖', '💜', '💙'], cost: 300 },
+  { id: 't_pizza', name: 'Pizza Rain', colors: [], emoji: ['🍕'], cost: 400 },
+  { id: 't_ducks', name: 'Duck March', colors: [], emoji: ['🐤'], cost: 350 },
 ];
 
 export function findSkin(id: string): Skin {

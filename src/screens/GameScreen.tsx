@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import Svg, { Circle, G, Line, Polygon, Rect } from 'react-native-svg';
-import { generateLevel, WORLD } from '../game/levelGen';
+import Svg, { Circle, G, Line, Polygon, Rect, Text as SvgText } from 'react-native-svg';
+import { generateAdventureLevel, generateLevel, stageForLevel, STAGE_LABELS, themeForLevel, WORLD } from '../game/levelGen';
+import { hashString } from '../game/rng';
 import { findAnchor, GameMode, newSim, respawn, Sim, step } from '../game/physics';
 import { findRope, findSkin, findTrail } from '../data/cosmetics';
 import { useStore } from '../state/store';
@@ -16,6 +17,19 @@ export interface RoundStats extends MathGateResult {
 }
 
 const TRAIL_LEN = 16;
+const CONFETTI_COLORS = ['#ffd166', '#06d6a0', '#ef476f', '#4cc9f0', '#b388ff', '#ffffff', '#ff9e64'];
+
+interface ConfettiBit {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  rot: number;
+  vr: number;
+  c: string;
+  w: number;
+  h: number;
+}
 
 export function GameScreen({
   mode,
@@ -26,34 +40,47 @@ export function GameScreen({
   levelLabel,
   onExit,
   onRoundDone,
+  endless,
+  onRunEnd,
 }: {
   mode: GameMode;
   grade: number;
-  level: number;
+  level: number; // in endless mode this is the run seed
   seedSalt?: string;
   mathSeed?: number;
   levelLabel: string;
   onExit: () => void;
   onRoundDone: (r: RoundStats) => void;
+  endless?: boolean; // Adventure run: no finish line, distance in meters, death ends the run
+  onRunEnd?: (meters: number) => void;
 }) {
   const { width, height } = useWindowDimensions();
   const { profile } = useStore();
   const skin = findSkin(profile.equippedSkin);
   const rope = findRope(profile.equippedRope);
   const trail = findTrail(profile.equippedTrail);
+  const trailEmojis = trail.emoji;
 
   const lvl = useMemo(
-    () => generateLevel(grade, level, seedSalt ?? (mode === 'swing' ? 'adv' : 'grap')),
-    [grade, level, seedSalt, mode]
+    () =>
+      endless
+        ? generateAdventureLevel(hashString(`run:${level}`))
+        : generateLevel(grade, level, seedSalt ?? (mode === 'swing' ? 'adv' : 'grap')),
+    [grade, level, seedSalt, mode, endless]
   );
+  const world = themeForLevel(endless ? 1 : level);
+  const stage = stageForLevel(level);
 
   const simRef = useRef<Sim>(newSim(lvl));
   const holdingRef = useRef(false);
   const camRef = useRef({ x: 0, y: 0 });
   const trailRef = useRef<{ x: number; y: number }[]>([]);
   const deadFlashRef = useRef(0);
+  const confettiRef = useRef<ConfettiBit[]>([]);
+  const clearedUntilRef = useRef(0);
+  const runEndedRef = useRef(false);
   const [, setFrame] = useState(0);
-  const [phase, setPhase] = useState<'play' | 'math'>('play');
+  const [phase, setPhase] = useState<'play' | 'cleared' | 'math'>('play');
   const phaseRef = useRef(phase);
   phaseRef.current = phase;
   const [hooksUsed, setHooksUsed] = useState(0);
@@ -63,6 +90,7 @@ export function GameScreen({
     simRef.current = newSim(lvl);
     trailRef.current = [];
     camRef.current = { x: 0, y: 0 };
+    runEndedRef.current = false;
     setPhase('play');
     setHooksUsed(0);
   }, [lvl]);
@@ -77,6 +105,19 @@ export function GameScreen({
       if (!last) last = now;
       let dt = Math.min(0.033, (now - last) / 1000);
       last = now;
+
+      // celebration: freeze the sim, rain confetti, then open the math gate
+      if (phaseRef.current === 'cleared') {
+        for (const c of confettiRef.current) {
+          c.vy += 820 * dt;
+          c.x += c.vx * dt;
+          c.y += c.vy * dt;
+          c.rot += c.vr * dt;
+        }
+        if (now >= clearedUntilRef.current) setPhase('math');
+        setFrame((f) => (f + 1) & 1023);
+        return;
+      }
       if (phaseRef.current !== 'play') return;
 
       const sim = simRef.current;
@@ -85,6 +126,14 @@ export function GameScreen({
         deadFlashRef.current = Math.max(0, deadFlashRef.current - dt * 2.5);
         if (deadWait > 0.45) {
           deadWait = 0;
+          if (endless) {
+            // Adventure run: death ends the run — report the distance
+            if (!runEndedRef.current) {
+              runEndedRef.current = true;
+              onRunEnd?.(Math.max(0, Math.round((sim.x - lvl.startX) / 10)));
+            }
+            return;
+          }
           respawn(sim, lvl);
           trailRef.current = [];
         }
@@ -95,17 +144,42 @@ export function GameScreen({
         // read via helper: step() mutates sim, which TS's narrowing can't see
         const status = ((s: Sim) => s.status)(sim);
         if (status === 'dead') deadFlashRef.current = 1;
+        if (status === 'win' && endless) {
+          // ran the entire endless course (!) — count it as the run distance
+          if (!runEndedRef.current) {
+            runEndedRef.current = true;
+            onRunEnd?.(Math.max(0, Math.round((sim.x - lvl.startX) / 10)));
+          }
+          return;
+        }
         if (status === 'win') {
-          setPhase('math');
+          const bits: ConfettiBit[] = [];
+          for (let i = 0; i < 46; i++) {
+            bits.push({
+              x: Math.random() * width,
+              y: height * 0.55 + Math.random() * height * 0.45,
+              vx: (Math.random() - 0.5) * 460,
+              vy: -(380 + Math.random() * 640),
+              rot: Math.random() * 360,
+              vr: (Math.random() - 0.5) * 760,
+              c: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+              w: 8 + Math.random() * 8,
+              h: 5 + Math.random() * 5,
+            });
+          }
+          confettiRef.current = bits;
+          clearedUntilRef.current = now + 1600;
+          setPhase('cleared');
         }
         const t = trailRef.current;
         t.push({ x: sim.x, y: sim.y });
         if (t.length > TRAIL_LEN) t.shift();
       }
 
-      // camera follow
+      // camera follow: keep the player dead-center so you can see what's
+      // coming ahead and what's behind you equally
       const cam = camRef.current;
-      const tx = sim.x - width * 0.32;
+      const tx = sim.x - width * 0.5;
       const ty = sim.y - height * 0.52;
       cam.x += (tx - cam.x) * 0.12;
       cam.y += (ty - cam.y) * 0.12;
@@ -121,12 +195,12 @@ export function GameScreen({
   const sim = simRef.current;
   const cam = camRef.current;
 
-  // spike strips as triangle fans, precomputed per level
+  // spike strips as triangle fans, precomputed per level (with x for culling)
   const spikePolys = useMemo(() => {
-    const polys: string[] = [];
+    const polys: { x: number; pts: string }[] = [];
     for (const s of lvl.floorSpikes) {
       for (let x = s.x0; x < s.x1; x += 22) {
-        polys.push(`${x},${lvl.floorY} ${x + 11},${lvl.floorY - 20} ${x + 22},${lvl.floorY}`);
+        polys.push({ x, pts: `${x},${lvl.floorY} ${x + 11},${lvl.floorY - 20} ${x + 22},${lvl.floorY}` });
       }
     }
     return polys;
@@ -136,8 +210,26 @@ export function GameScreen({
   const hookedAnchor = sim.hooked !== null ? lvl.anchors[sim.hooked] : null;
   const tilt = Math.max(-28, Math.min(28, sim.vx * 0.02));
 
+  // viewport culling: adventure courses have hundreds of entities — only
+  // mount SVG nodes for what's near the camera, or the frame rate tanks
+  const viewL = cam.x - 240;
+  const viewR = cam.x + width + 240;
+
+  // visible floor pieces: the full span minus any gaps (nothing to land on there)
+  const floorSegs: { x0: number; x1: number }[] = [];
+  {
+    let cur = cam.x - 60;
+    const end = cam.x + width + 60;
+    for (const g of lvl.floorGaps) {
+      if (g.x1 < cur || g.x0 > end) continue;
+      if (g.x0 > cur) floorSegs.push({ x0: cur, x1: g.x0 });
+      cur = Math.max(cur, g.x1);
+    }
+    if (cur < end) floorSegs.push({ x0: cur, x1: end });
+  }
+
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, { backgroundColor: world.bg }]}>
       <View
         style={StyleSheet.absoluteFill}
         onStartShouldSetResponder={() => true}
@@ -161,37 +253,43 @@ export function GameScreen({
             return <Circle key={`st${i}`} cx={sx} cy={sy} r={s.r} fill="#ffffff" opacity={s.o} />;
           })}
 
-          {/* trampoline floor */}
-          <Rect x={0} y={lvl.floorY - cam.y} width={width} height={Math.max(0, height - (lvl.floorY - cam.y))} fill={theme.floor} />
-          <Rect x={0} y={lvl.floorY - cam.y} width={width} height={7} fill={theme.floorBounce} />
-
-          {/* spike strips */}
           <G x={-cam.x} y={-cam.y}>
-            {/* striped plank band along the floor top */}
-            <Line x1={cam.x - 60} y1={lvl.floorY + 8} x2={cam.x + width + 60} y2={lvl.floorY + 8} stroke="#0c0e28" strokeWidth={16} />
-            <Line x1={cam.x - 60} y1={lvl.floorY + 8} x2={cam.x + width + 60} y2={lvl.floorY + 8} stroke="#f2f3ff" strokeWidth={7} strokeDasharray="26,20" opacity={0.9} />
-
-            {spikePolys.map((p, i) => (
-              <Polygon key={`sp${i}`} points={p} fill={theme.hazard} />
-            ))}
-
-            {/* mid-air bumper planks */}
-            {lvl.planks.map((p, i) => (
-              <G key={`pl${i}`}>
-                <Rect x={p.x} y={p.y} width={p.w} height={p.h} rx={p.h / 2} fill="#0c0e28" />
-                <Line
-                  x1={p.x + 10}
-                  y1={p.y + p.h / 2}
-                  x2={p.x + p.w - 10}
-                  y2={p.y + p.h / 2}
-                  stroke="#f2f3ff"
-                  strokeWidth={p.h - 10}
-                  strokeDasharray="16,13"
-                  strokeLinecap="round"
-                  opacity={0.9}
-                />
+            {/* trampoline floor in striped-plank segments, broken by gaps */}
+            {floorSegs.map((s, i) => (
+              <G key={`fs${i}`}>
+                <Rect x={s.x0} y={lvl.floorY} width={s.x1 - s.x0} height={Math.max(0, cam.y + height - lvl.floorY)} fill={world.floor} />
+                <Rect x={s.x0} y={lvl.floorY} width={s.x1 - s.x0} height={7} fill={world.floorBounce} />
+                <Line x1={s.x0 + 6} y1={lvl.floorY + 8} x2={s.x1 - 6} y2={lvl.floorY + 8} stroke="#0c0e28" strokeWidth={16} />
+                <Line x1={s.x0 + 12} y1={lvl.floorY + 8} x2={s.x1 - 12} y2={lvl.floorY + 8} stroke="#f2f3ff" strokeWidth={7} strokeDasharray="26,20" opacity={0.9} />
               </G>
             ))}
+
+            {spikePolys.map((p, i) =>
+              p.x < viewL || p.x > viewR ? null : <Polygon key={`sp${i}`} points={p.pts} fill={theme.hazard} />
+            )}
+
+            {/* bumper planks: horizontal bounce pads and vertical walls */}
+            {lvl.planks.map((p, i) => {
+              if (p.x + p.w < viewL || p.x > viewR) return null;
+              const vertical = p.h > p.w;
+              const thin = Math.min(p.w, p.h);
+              return (
+                <G key={`pl${i}`}>
+                  <Rect x={p.x} y={p.y} width={p.w} height={p.h} rx={thin / 2} fill="#0c0e28" />
+                  <Line
+                    x1={vertical ? p.x + p.w / 2 : p.x + 10}
+                    y1={vertical ? p.y + 10 : p.y + p.h / 2}
+                    x2={vertical ? p.x + p.w / 2 : p.x + p.w - 10}
+                    y2={vertical ? p.y + p.h - 10 : p.y + p.h / 2}
+                    stroke="#f2f3ff"
+                    strokeWidth={thin - 10}
+                    strokeDasharray="16,13"
+                    strokeLinecap="round"
+                    opacity={0.9}
+                  />
+                </G>
+              );
+            })}
 
             {/* finish gate */}
             <Rect x={lvl.finishX} y={lvl.floorY - 560} width={10} height={560} fill={theme.finish} opacity={0.9} rx={4} />
@@ -200,32 +298,63 @@ export function GameScreen({
               fill={theme.accent}
             />
 
-            {/* anchors (diamonds) */}
+            {/* portals: zoom you fast to the right */}
+            {lvl.portals.map((pt, i) => (
+              pt.x < viewL || pt.x > viewR ? null : (
+              <G key={`po${i}`}>
+                <Circle cx={pt.x} cy={pt.y} r={pt.r + 8} fill={theme.accent2} opacity={0.16} />
+                <Circle cx={pt.x} cy={pt.y} r={pt.r} fill={theme.bgDeep} opacity={0.75} />
+                <Circle
+                  cx={pt.x}
+                  cy={pt.y}
+                  r={pt.r - 4}
+                  fill="none"
+                  stroke={theme.accent2}
+                  strokeWidth={3.5}
+                  strokeDasharray="14,9"
+                  rotation={(sim.t * 140) % 360}
+                  origin={`${pt.x}, ${pt.y}`}
+                />
+                <Polygon
+                  points={`${pt.x - 6},${pt.y - 9} ${pt.x + 9},${pt.y} ${pt.x - 6},${pt.y + 9}`}
+                  fill={theme.accent2}
+                  opacity={0.9}
+                />
+              </G>
+              )
+            ))}
+
+            {/* anchors (diamonds); green = turbo spin, red = backward sling (one use) */}
             {lvl.anchors.map((a, i) => {
+              if (a.x < viewL || a.x > viewR || sim.consumed.has(i)) return null;
               const active = i === sim.hooked;
               const target = i === targetIdx;
+              const kindColor = a.kind === 'green' ? '#3ddc84' : a.kind === 'red' ? '#ff5252' : world.anchor;
               const r = active ? 14 : 12;
               const pts = `${a.x},${a.y - r} ${a.x + r},${a.y} ${a.x},${a.y + r} ${a.x - r},${a.y}`;
               return (
                 <G key={`a${i}`}>
                   {/* dashed targeting ring, like the original's hook halos */}
                   {!target && !active ? (
-                    <Circle cx={a.x} cy={a.y} r={26} fill="none" stroke={theme.anchor} strokeWidth={1.5} strokeDasharray="5,7" opacity={0.3} />
+                    <Circle cx={a.x} cy={a.y} r={26} fill="none" stroke={kindColor} strokeWidth={1.5} strokeDasharray="5,7" opacity={a.kind ? 0.55 : 0.3} />
                   ) : null}
                   {target ? <Circle cx={a.x} cy={a.y} r={22 + Math.sin(sim.t * 6) * 4} fill="none" stroke={theme.anchorActive} strokeWidth={2.5} strokeDasharray="6,5" opacity={0.9} /> : null}
-                  <Polygon points={pts} fill={active ? theme.anchorActive : theme.anchor} opacity={active ? 1 : 0.9} />
+                  <Polygon points={pts} fill={active ? theme.anchorActive : kindColor} opacity={active ? 1 : 0.9} />
                   <Circle cx={a.x} cy={a.y} r={3.5} fill={theme.bgDeep} />
                 </G>
               );
             })}
 
-            {/* air hazards */}
+            {/* air hazards (vertical or horizontal sweepers) */}
             {lvl.airHazards.map((h, i) => {
-              const hy = h.y + (h.oscAmp ? Math.sin(sim.t * h.oscSpeed + h.phase) * h.oscAmp : 0);
+              if (h.x + h.oscAmp < viewL || h.x - h.oscAmp > viewR) return null;
+              const osc = h.oscAmp ? Math.sin(sim.t * h.oscSpeed + h.phase) * h.oscAmp : 0;
+              const hx = h.x + (h.axis === 'x' ? osc : 0);
+              const hy = h.y + (h.axis === 'y' ? osc : 0);
               return (
                 <G key={`h${i}`}>
-                  <Circle cx={h.x} cy={hy} r={h.r} fill={theme.hazard} opacity={0.9} />
-                  <Circle cx={h.x} cy={hy} r={h.r * 0.55} fill={theme.bgDeep} opacity={0.6} />
+                  <Circle cx={hx} cy={hy} r={h.r} fill={theme.hazard} opacity={0.9} />
+                  <Circle cx={hx} cy={hy} r={h.r * 0.55} fill={theme.bgDeep} opacity={0.6} />
                 </G>
               );
             })}
@@ -244,27 +373,60 @@ export function GameScreen({
               />
             ) : null}
 
-            {/* trail */}
-            {trail.colors.length > 0 &&
-              trailRef.current.map((p, i) => {
-                const f = i / TRAIL_LEN;
-                return (
-                  <Circle
-                    key={`t${i}`}
-                    cx={p.x}
-                    cy={p.y + 14}
-                    r={2 + f * 6}
-                    fill={trail.colors[i % trail.colors.length]}
-                    opacity={f * 0.5}
-                  />
-                );
-              })}
+            {/* trail: object followers (parachute pals etc.) or classic dots */}
+            {trailEmojis
+              ? trailRef.current.map((p, i) => {
+                  if (i % 3 !== 0) return null;
+                  const f = i / TRAIL_LEN;
+                  return (
+                    <SvgText
+                      key={`t${i}`}
+                      x={p.x}
+                      y={p.y + 24}
+                      fontSize={10 + f * 12}
+                      opacity={0.3 + f * 0.65}
+                      textAnchor="middle"
+                    >
+                      {trailEmojis[((i / 3) | 0) % trailEmojis.length]}
+                    </SvgText>
+                  );
+                })
+              : trail.colors.length > 0 &&
+                trailRef.current.map((p, i) => {
+                  const f = i / TRAIL_LEN;
+                  return (
+                    <Circle
+                      key={`t${i}`}
+                      cx={p.x}
+                      cy={p.y + 14}
+                      r={2 + f * 6}
+                      fill={trail.colors[i % trail.colors.length]}
+                      opacity={f * 0.5}
+                    />
+                  );
+                })}
 
-            {/* player */}
-            <G x={sim.x} y={sim.y} rotation={tilt}>
-              <DoodleFigure skin={skin} pose={sim.hooked !== null ? 'hooked' : 'fly'} />
+            {/* player: stickman on the rope, bouncy ball in the air */}
+            <G x={sim.x} y={sim.y} rotation={sim.hooked !== null ? tilt : (sim.x * 0.85) % 360}>
+              <DoodleFigure skin={skin} pose={sim.hooked !== null ? 'hooked' : 'ball'} />
             </G>
           </G>
+
+          {/* confetti burst (screen space) */}
+          {phase === 'cleared' &&
+            confettiRef.current.map((c, i) => (
+              <Rect
+                key={`cf${i}`}
+                x={c.x}
+                y={c.y}
+                width={c.w}
+                height={c.h}
+                rx={2}
+                fill={c.c}
+                rotation={c.rot}
+                origin={`${c.x}, ${c.y}`}
+              />
+            ))}
         </Svg>
 
         {/* death flash */}
@@ -279,11 +441,22 @@ export function GameScreen({
           <Text style={styles.exitText}>✕</Text>
         </Pressable>
         <View style={styles.levelBadge}>
-          <Text style={styles.levelText}>{levelLabel}</Text>
-          <View style={styles.progTrack}>
-            <View style={[styles.progFill, { width: `${Math.min(100, Math.max(0, (sim.x / lvl.finishX) * 100))}%` }]} />
-          </View>
-          <Text style={styles.modeText}>{mode === 'swing' ? '🪝 SWING' : '🧲 GRAPPLE'}</Text>
+          {endless ? (
+            <>
+              <Text style={styles.metersText}>{Math.max(0, Math.round((sim.x - lvl.startX) / 10))}m</Text>
+              <Text style={styles.modeText}>🌀 ADVENTURE RUN</Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.levelText}>{levelLabel}</Text>
+              <View style={styles.progTrack}>
+                <View style={[styles.progFill, { width: `${Math.min(100, Math.max(0, (sim.x / lvl.finishX) * 100))}%` }]} />
+              </View>
+              <Text style={styles.modeText}>
+                {mode === 'swing' ? '🪝' : '🧲'} {world.name.toUpperCase()} • {STAGE_LABELS[stage].toUpperCase()}
+              </Text>
+            </>
+          )}
         </View>
         <View style={styles.retryBadge}>
           <Text style={styles.retryText}>↻ {sim.retries}</Text>
@@ -295,6 +468,13 @@ export function GameScreen({
           <Text style={styles.hintText}>
             {mode === 'swing' ? 'HOLD anywhere to hook the glowing diamond\nRELEASE to fly!' : 'HOLD to grapple — it pulls you straight in.\nRELEASE to launch!'}
           </Text>
+        </View>
+      )}
+
+      {phase === 'cleared' && (
+        <View pointerEvents="none" style={styles.clearedWrap}>
+          <Text style={styles.clearedText}>LEVEL CLEARED!</Text>
+          <Text style={styles.clearedSub}>⚡ MATH GATE INCOMING…</Text>
         </View>
       )}
 
@@ -336,6 +516,7 @@ const styles = StyleSheet.create({
   exitText: { color: theme.text, fontSize: 16, fontWeight: '900' },
   levelBadge: { alignItems: 'center' },
   levelText: { color: theme.text, fontWeight: '900', fontSize: 17 },
+  metersText: { color: theme.text, fontWeight: '900', fontSize: 26, letterSpacing: 1 },
   progTrack: { width: 130, height: 5, borderRadius: 3, backgroundColor: '#1a1d4acc', marginTop: 4, marginBottom: 2, overflow: 'hidden' },
   progFill: { height: '100%', backgroundColor: theme.accent, borderRadius: 3 },
   modeText: { color: theme.textDim, fontWeight: '700', fontSize: 11, letterSpacing: 1.5 },
@@ -348,6 +529,17 @@ const styles = StyleSheet.create({
     borderColor: theme.line,
   },
   retryText: { color: theme.textDim, fontWeight: '800', fontSize: 13 },
+  clearedWrap: { position: 'absolute', top: '22%', left: 0, right: 0, alignItems: 'center' },
+  clearedText: {
+    color: theme.text,
+    fontSize: 38,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+    textShadowColor: '#00000088',
+    textShadowOffset: { width: 0, height: 3 },
+    textShadowRadius: 8,
+  },
+  clearedSub: { color: theme.accent, fontSize: 14, fontWeight: '900', letterSpacing: 3, marginTop: 8 },
   hint: { position: 'absolute', bottom: 90, left: 0, right: 0, alignItems: 'center' },
   hintText: {
     color: theme.text,

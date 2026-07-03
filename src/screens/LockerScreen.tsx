@@ -76,13 +76,19 @@ export function LockerScreen({ onHome }: { onHome: () => void }) {
             onPress={() => (owned ? equip('trail', t.id) : buy('trail', t.id, t.cost))}
             style={[styles.itemRow, equipped && styles.equipped]}
           >
-            <Svg width={44} height={20}>
-              {t.colors.length === 0 ? (
-                <Line x1={6} y1={10} x2={38} y2={10} stroke={theme.line} strokeWidth={2} strokeDasharray="2,4" />
-              ) : (
-                t.colors.slice(0, 5).map((c, i) => <Circle key={i} cx={8 + i * 8} cy={10} r={3 + i * 0.6} fill={c} />)
-              )}
-            </Svg>
+            {t.emoji ? (
+              <Text style={{ width: 44, fontSize: 15 }} numberOfLines={1}>
+                {Array.from({ length: 3 }, (_, i) => t.emoji![i % t.emoji!.length]).join('')}
+              </Text>
+            ) : (
+              <Svg width={44} height={20}>
+                {t.colors.length === 0 ? (
+                  <Line x1={6} y1={10} x2={38} y2={10} stroke={theme.line} strokeWidth={2} strokeDasharray="2,4" />
+                ) : (
+                  t.colors.slice(0, 5).map((c, i) => <Circle key={i} cx={8 + i * 8} cy={10} r={3 + i * 0.6} fill={c} />)
+                )}
+              </Svg>
+            )}
             <Text style={styles.itemName}>{t.name}</Text>
             <Text style={[styles.itemPrice, owned && { color: theme.good }]}>
               {equipped ? 'EQUIPPED' : owned ? 'TAP TO EQUIP' : `🪙 ${t.cost}`}

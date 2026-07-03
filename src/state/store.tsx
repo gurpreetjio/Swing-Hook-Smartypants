@@ -19,8 +19,9 @@ export interface Profile {
   grade: number | null; // 0=K .. 8
   coins: number;
   xp: number;
-  adventure: Record<number, ModeProgress>;
+  adventure: Record<number, ModeProgress>; // "Classic" 200-level mode progress
   grapple: Record<number, ModeProgress>;
+  adventureBest: number; // Adventure run: best distance in meters
   barProgress: number; // 0..BAR_SIZE correct answers in current bar
   barFastCount: number; // how many of those were fast
   skinsOwned: string[];
@@ -49,6 +50,7 @@ export function defaultProfile(): Profile {
     xp: 0,
     adventure: {},
     grapple: {},
+    adventureBest: 0,
     barProgress: 0,
     barFastCount: 0,
     skinsOwned: ['doodle'],
@@ -85,12 +87,48 @@ export interface RoundRewards {
   gradeCompleted?: boolean;
 }
 
+// Bank a math-gate result: coins/XP, streak counters, and the crate bar with
+// its skin (and fast-answer special variant) unlocks. Shared by Classic rounds
+// and Adventure runs.
+function applyMathRewards(p: Profile, band: number, result: RoundResult, rewards: RoundRewards): void {
+  if (!result.correct) return;
+  rewards.coins += 10 + band * 2;
+  rewards.xp += 20 + band * 4;
+  p.totalCorrect += 1;
+  if (result.fast) {
+    rewards.coins += 10;
+    rewards.xp += 15;
+    p.totalFast += 1;
+  }
+  // progression bar only moves on correct answers
+  p.barProgress += 1;
+  if (result.fast) p.barFastCount += 1;
+  if (p.barProgress >= BAR_SIZE) {
+    const nextLocked = CLASSIC_SKINS.find((s) => !p.skinsOwned.includes(s.id));
+    if (nextLocked) {
+      p.skinsOwned.push(nextLocked.id);
+      rewards.unlockedSkin = nextLocked.id;
+      if (p.barFastCount >= BAR_SIZE) {
+        const sp = specialVariant(nextLocked);
+        p.skinsOwned.push(sp.id);
+        rewards.unlockedSpecial = sp.id;
+      }
+    } else {
+      rewards.coins += 100; // all classics owned — coins instead
+    }
+    p.barProgress = 0;
+    p.barFastCount = 0;
+  }
+}
+
 interface StoreApi {
   profile: Profile;
   loaded: boolean;
   setGrade(grade: number): void;
-  /** Apply an adventure/grapple round: advance level, bank rewards, roll progression bar. */
+  /** Apply a Classic/Grapple round: advance level, bank rewards, roll progression bar. */
   completeRound(mode: 'adventure' | 'grapple', band: number, result: RoundResult): RoundRewards;
+  /** Apply an Adventure run: distance rewards + math gate, update best meters. */
+  reportAdventureRun(meters: number, band: number, result: RoundResult): RoundRewards;
   spendCoins(amount: number): boolean;
   addCoins(amount: number): void;
   ownSkin(id: string): void;
@@ -199,45 +237,31 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           (mode === 'adventure' ? p.adventure : p.grapple)[g] = prog;
 
           rewards.coins += 5; // clearing the course
-          if (result.correct) {
-            rewards.coins += 10 + band * 2;
-            rewards.xp += 20 + band * 4;
-            p.totalCorrect += 1;
-            if (result.fast) {
-              rewards.coins += 10;
-              rewards.xp += 15;
-              p.totalFast += 1;
-            }
-            // progression bar only moves on correct answers
-            p.barProgress += 1;
-            if (result.fast) p.barFastCount += 1;
-            if (p.barProgress >= BAR_SIZE) {
-              const nextLocked = CLASSIC_SKINS.find((s) => !p.skinsOwned.includes(s.id));
-              if (nextLocked) {
-                p.skinsOwned.push(nextLocked.id);
-                rewards.unlockedSkin = nextLocked.id;
-                if (p.barFastCount >= BAR_SIZE) {
-                  const sp = specialVariant(nextLocked);
-                  p.skinsOwned.push(sp.id);
-                  rewards.unlockedSpecial = sp.id;
-                }
-              } else {
-                rewards.coins += 100; // all classics owned — coins instead
-              }
-              p.barProgress = 0;
-              p.barFastCount = 0;
-            }
-          }
+          applyMathRewards(p, band, result, rewards);
 
-          // advance the level regardless of math result (math gates rewards, not progress)
-          if (prog.level >= LEVELS_PER_GRADE && !prog.completed) {
+          // advance the level regardless of math result (math gates rewards, not
+          // progress). Finishing level 200 completes the grade, but the level
+          // counter keeps going forever into endless challenge levels.
+          if (prog.level === LEVELS_PER_GRADE && !prog.completed) {
             prog.completed = true;
             rewards.coins += 1000;
             rewards.gradeCompleted = true;
-          } else if (prog.level < LEVELS_PER_GRADE) {
-            prog.level += 1;
           }
+          prog.level += 1;
 
+          p.coins += rewards.coins;
+          p.xp += rewards.xp;
+        });
+        return rewards;
+      },
+
+      reportAdventureRun: (meters, band, result) => {
+        const rewards: RoundRewards = { coins: 0, xp: 0 };
+        update((p) => {
+          rewards.coins += Math.floor(meters / 20); // distance pays
+          rewards.xp += Math.floor(meters / 40);
+          applyMathRewards(p, band, result, rewards);
+          if (meters > p.adventureBest) p.adventureBest = meters;
           p.coins += rewards.coins;
           p.xp += rewards.xp;
         });

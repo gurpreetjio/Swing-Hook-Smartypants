@@ -13,7 +13,8 @@ import { theme } from '../theme';
 export type Route =
   | { name: 'home' }
   | { name: 'gradeSelect' }
-  | { name: 'adventure'; mode: 'swing' | 'grapple' }
+  | { name: 'adventure'; mode: 'swing' | 'grapple' } // Classic & Grapple level modes
+  | { name: 'run' } // Adventure: the endless meters run
   | { name: 'tournament' }
   | { name: 'leaderboard' }
   | { name: 'locker' };
@@ -64,13 +65,31 @@ export function HomeScreen({ go }: { go: (r: Route) => void }) {
 
       {/* modes */}
       <BigButton
-        label={adv.completed ? `✅ ${GRADE_LABELS[grade]} COMPLETE — Replay` : `ADVENTURE  •  Level ${adv.level}/${LEVELS_PER_GRADE}`}
-        sub={`${GRADE_LABELS[grade]} math • unlimited plays`}
+        label={
+          adv.level > LEVELS_PER_GRADE
+            ? `CLASSIC  •  ⚡ CHALLENGE LV ${adv.level}`
+            : `CLASSIC  •  Level ${adv.level}/${LEVELS_PER_GRADE}`
+        }
+        sub={
+          adv.completed
+            ? `🎓 ${GRADE_LABELS[grade]} complete • endless challenge levels`
+            : `${GRADE_LABELS[grade]} math • unlimited plays`
+        }
         color={theme.accent2}
         onPress={() => go({ name: 'adventure', mode: 'swing' })}
       />
       <BigButton
-        label={`GRAPPLE MODE  •  Level ${grap.level}/${LEVELS_PER_GRADE}`}
+        label={`ADVENTURE  •  BEST ${profile.adventureBest}m`}
+        sub="One endless run — portals, green turbo hooks, red sling hooks"
+        color={theme.good}
+        onPress={() => go({ name: 'run' })}
+      />
+      <BigButton
+        label={
+          grap.level > LEVELS_PER_GRADE
+            ? `GRAPPLE MODE  •  ⚡ CHALLENGE LV ${grap.level}`
+            : `GRAPPLE MODE  •  Level ${grap.level}/${LEVELS_PER_GRADE}`
+        }
         sub="No swinging — the hook pulls you straight!"
         color={theme.purple}
         onPress={() => go({ name: 'adventure', mode: 'grapple' })}
