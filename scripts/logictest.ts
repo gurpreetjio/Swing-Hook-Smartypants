@@ -81,6 +81,7 @@ for (let grade = 0; grade <= 8; grade++) {
       lvl.finishX,
     ];
     assert(vals.every(Number.isFinite), `g${grade} l${level}: non-finite geometry`);
+    assert(lvl.fire === false, `g${grade} l${level}: fire outside Adventure mode`);
 
     const pads = lvl.planks.filter((p) => p.w >= p.h);
     const towers = lvl.planks.filter((p) => p.h > p.w && p.y + p.h >= lvl.floorY - 1);
@@ -177,6 +178,7 @@ for (const seed of [12345, 999, 424242]) {
   assert(alvl.anchors.some((a) => a.kind === 'red'), `adventure ${seed}: no red hooks`);
   assert(alvl.portals.length >= 10, `adventure ${seed}: too few portals (${alvl.portals.length})`);
   assert(alvl.floorGaps.length >= 3, `adventure ${seed}: too few missing planks`);
+  assert(alvl.fire === true, `adventure ${seed}: adventure runs must have the fire`);
   for (let i = 1; i < alvl.floorGaps.length; i++) {
     assert(alvl.floorGaps[i].x0 >= alvl.floorGaps[i - 1].x1, `adventure ${seed}: overlapping gaps`);
   }
@@ -184,7 +186,7 @@ for (const seed of [12345, 999, 424242]) {
 console.log('adventure gen: ok');
 
 // synthetic mini-level for special-hook physics
-function makeLevel(anchors: Level['anchors'], portals: Level['portals'] = []): Level {
+function makeLevel(anchors: Level['anchors'], portals: Level['portals'] = [], fire = false): Level {
   return {
     anchors,
     portals,
@@ -197,6 +199,7 @@ function makeLevel(anchors: Level['anchors'], portals: Level['portals'] = []): L
     finishX: 1e9,
     floorY: 640,
     ceilY: -80,
+    fire,
   };
 }
 
@@ -264,9 +267,9 @@ console.log('special hooks & portals: ok');
   assert(sim.status === 'dead', `falling into a floor gap should be fatal (status=${sim.status})`);
 }
 
-// ---- the fire catches campers: stand still long enough and you burn ----
+// ---- the fire (Adventure only) catches campers; Classic levels have none ----
 {
-  const lvl = makeLevel([{ x: 100000, y: 100 }]); // hooks far away; player just bounces in place
+  const lvl = makeLevel([{ x: 100000, y: 100 }], [], true); // hooks far away; player just bounces in place
   const sim = newSim(lvl);
   sim.x = 200;
   sim.vx = 0;
@@ -281,6 +284,15 @@ console.log('special hooks & portals: ok');
   // and a respawn resets the fire
   respawn(sim, lvl);
   assert(sim.fireX < lvl.startX, 'fire should reset behind the start on respawn');
+
+  // same camper on a Classic level (no fire): perfectly safe
+  const calm = makeLevel([{ x: 100000, y: 100 }]);
+  const sim2 = newSim(calm);
+  sim2.x = 200;
+  sim2.vx = 0;
+  sim2.vy = 0;
+  for (let t = 0; t < 15; t += 1 / 120) step(sim2, calm, 'swing', false, 1 / 120);
+  assert(sim2.status === 'alive', 'no fire outside Adventure — camping in Classic is safe');
 }
 
 // ---- physics: scripted bot must stay finite; expect forward progress & some wins ----

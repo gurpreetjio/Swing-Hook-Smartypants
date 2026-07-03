@@ -207,8 +207,8 @@ export function GameScreen({
   // mount SVG nodes for what's near the camera, or the frame rate tanks
   const viewL = cam.x - 240;
   const viewR = cam.x + width + 240;
-  const fireOnScreen = sim.fireX > viewL - 200;
-  const fireGap = sim.x - sim.fireX;
+  const fireOnScreen = lvl.fire && sim.fireX > viewL - 200;
+  const fireGap = lvl.fire ? sim.x - sim.fireX : Infinity;
 
   return (
     <View style={[styles.root, { backgroundColor: world.bg }]}>

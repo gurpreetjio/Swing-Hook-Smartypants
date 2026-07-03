@@ -231,15 +231,17 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
     return;
   }
 
-  // the fire cloud creeps up from behind; it hurries if it falls too far back,
-  // so camping in one spot always ends the same way
-  if (sim.t > WORLD.fireGraceSec) {
-    const catchup = Math.max(0, sim.x - sim.fireX - WORLD.fireMaxLagPx) * 0.5;
-    sim.fireX += (WORLD.fireSpeed + catchup) * dt;
-  }
-  if (sim.x < sim.fireX + 20) {
-    sim.status = 'dead';
-    return;
+  // the fire cloud (Adventure runs only) creeps up from behind; it hurries if
+  // it falls too far back, so camping in one spot always ends the same way
+  if (level.fire) {
+    if (sim.t > WORLD.fireGraceSec) {
+      const catchup = Math.max(0, sim.x - sim.fireX - WORLD.fireMaxLagPx) * 0.5;
+      sim.fireX += (WORLD.fireSpeed + catchup) * dt;
+    }
+    if (sim.x < sim.fireX + 20) {
+      sim.status = 'dead';
+      return;
+    }
   }
 
   // mid-air bumper planks: reflect the player away with a boost

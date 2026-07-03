@@ -31,14 +31,14 @@ every round — answer fast for bonus rewards. No ads, ever.
   - *Challenge (201+)*: endless levels with extreme, misleading hook angles
 
   The ground is a row of thick striped planks — where one is missing, there's
-  nothing to land on. And a **fire cloud** creeps up from behind: camp in one
-  spot too long and it catches you. 🔥
+  nothing to land on.
 - **Grapple Mode** — no pendulum: the hook *pulls you straight in*. Same worlds,
   totally different feel, its own progress track.
 - **Adventure** — one endless run scored in meters. Portals zoom you fast to the
-  right, green hooks turbo-charge your spin, red hooks sling you backward. When
-  you fall, a Math Gate (tuned to your distance) banks the rewards; best
-  distance shows on the home screen.
+  right, green hooks turbo-charge your spin, red hooks sling you backward — and
+  a **fire cloud** 🔥 creeps up from behind, so camping in one spot ends the
+  run. When you fall (or burn), a Math Gate tuned to your distance banks the
+  rewards; best distance shows on the home screen.
 - **Math Gate** — one timed question after every level. Correct = coins + XP +
   crate progress. Answer inside the ⚡ fast window for bonus coins — fill a whole
   crate with fast answers and the unlocked skin comes with a special glow variant.

@@ -55,6 +55,7 @@ export interface Level {
   finishX: number;
   floorY: number; // bouncy trampoline plank row
   ceilY: number;
+  fire: boolean; // Adventure runs only: the fire cloud chases from behind
 }
 
 export const WORLD = {
@@ -272,6 +273,7 @@ export function generateLevel(grade: number, level: number, seedSalt = 'adv'): L
     finishX,
     floorY,
     ceilY: -80,
+    fire: false,
   };
 }
 
@@ -326,5 +328,6 @@ export function generateAdventureLevel(seed: number): Level {
     finishX,
     floorY,
     ceilY: -80,
+    fire: true,
   };
 }
