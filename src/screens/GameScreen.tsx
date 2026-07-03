@@ -79,6 +79,7 @@ export function GameScreen({
   const confettiRef = useRef<ConfettiBit[]>([]);
   const clearedUntilRef = useRef(0);
   const runEndedRef = useRef(false);
+  const spinRef = useRef(0);
   const [, setFrame] = useState(0);
   const [phase, setPhase] = useState<'play' | 'cleared' | 'math'>('play');
   const phaseRef = useRef(phase);
@@ -174,6 +175,9 @@ export function GameScreen({
         const t = trailRef.current;
         t.push({ x: sim.x, y: sim.y });
         if (t.length > TRAIL_LEN) t.shift();
+
+        // ball spin follows actual horizontal motion (rolling direction & speed)
+        if (sim.hooked === null) spinRef.current = (spinRef.current + sim.vx * dt * 2.4) % 360;
       }
 
       // camera follow: keep the player dead-center so you can see what's
@@ -407,7 +411,7 @@ export function GameScreen({
                 })}
 
             {/* player: stickman on the rope, bouncy ball in the air */}
-            <G x={sim.x} y={sim.y} rotation={sim.hooked !== null ? tilt : (sim.x * 0.85) % 360}>
+            <G x={sim.x} y={sim.y} rotation={sim.hooked !== null ? tilt : spinRef.current}>
               <DoodleFigure skin={skin} pose={sim.hooked !== null ? 'hooked' : 'ball'} />
             </G>
           </G>

@@ -20,13 +20,17 @@ export function DoodleFigure({
   const body = skin.body;
   const armUp = pose === 'hooked';
   if (pose === 'ball') {
+    // centered on (0,0) — the parent rotates about its origin, so the ball
+    // must sit exactly on it to spin in place rather than orbit
     return (
       <G scale={scale}>
-        {skin.glow ? <Circle cx={0} cy={14} r={30} fill={skin.glow} opacity={0.22} /> : null}
-        <Circle cx={0} cy={14} r={16} fill={skin.head} />
-        <Circle cx={0} cy={14} r={16} fill="none" stroke={body} strokeWidth={3} opacity={0.65} />
-        <Circle cx={-5} cy={11} r={2.3} fill="#10123a" />
-        <Circle cx={5} cy={11} r={2.3} fill="#10123a" />
+        {skin.glow ? <Circle cx={0} cy={0} r={30} fill={skin.glow} opacity={0.22} /> : null}
+        <Circle cx={0} cy={0} r={16} fill={skin.head} />
+        <Circle cx={0} cy={0} r={16} fill="none" stroke={body} strokeWidth={3} opacity={0.65} />
+        <Circle cx={-5} cy={-3} r={2.3} fill="#10123a" />
+        <Circle cx={5} cy={-3} r={2.3} fill="#10123a" />
+        {/* a tucked-knees mark so the spin reads clearly */}
+        <Circle cx={0} cy={9} r={4.5} fill={body} opacity={0.85} />
       </G>
     );
   }
