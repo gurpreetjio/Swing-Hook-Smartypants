@@ -24,11 +24,15 @@ every round — answer fast for bonus rewards. No ads, ever.
   (you tuck into a bouncy ball in the air). Unlimited plays. Levels follow the
   classic difficulty arc through **10 themed locations** (a new world every 20
   levels):
-  - *Beginner (1–20)*: simple hooks and bounce pads, minimal obstacles
-  - *Intermediate (21–50)*: more bounce pads, tighter hooks, floor spikes
-  - *Advanced (51–100)*: longer gaps, moving obstacles
-  - *Expert (101–200)*: far-apart hooks, unpredictable pads, momentum-killing walls
+  - *Beginner (1–20)*: simple hooks and bounce pads on mostly solid ground
+  - *Intermediate (21–50)*: more missing ground planks, bumper towers
+  - *Advanced (51–100)*: hook ladders, longer swings between hooks
+  - *Expert (101–200)*: far-apart hooks, unpredictable pads, walls, double-wide holes
   - *Challenge (201+)*: endless levels with extreme, misleading hook angles
+
+  The ground is a row of thick striped planks — where one is missing, there's
+  nothing to land on. And a **fire cloud** creeps up from behind: camp in one
+  spot too long and it catches you. 🔥
 - **Grapple Mode** — no pendulum: the hook *pulls you straight in*. Same worlds,
   totally different feel, its own progress track.
 - **Adventure** — one endless run scored in meters. Portals zoom you fast to the

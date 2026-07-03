@@ -19,6 +19,7 @@ export interface Sim {
   dashUntil: number; // portal zoom window: speed cap is lifted
   portalCdUntil: number; // don't re-trigger the same portal instantly
   consumed: Set<number>; // one-shot anchors (red hooks) already used this attempt
+  fireX: number; // right edge of the fire cloud chasing from behind
 }
 
 export function newSim(level: Level): Sim {
@@ -39,6 +40,7 @@ export function newSim(level: Level): Sim {
     dashUntil: 0,
     portalCdUntil: 0,
     consumed: new Set(),
+    fireX: level.startX - WORLD.fireStartOffset,
   };
 }
 
@@ -56,6 +58,7 @@ export function respawn(sim: Sim, level: Level): void {
   sim.dashUntil = 0;
   sim.portalCdUntil = 0;
   sim.consumed.clear();
+  sim.fireX = level.startX - WORLD.fireStartOffset;
 }
 
 /**
@@ -211,15 +214,9 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
     if (sim.vy < 0) sim.vy = -sim.vy * 0.4;
   }
 
-  // trampoline floor (deadly where spiked, absent over gaps)
+  // trampoline plank floor (absent where planks are missing)
   const overGap = level.floorGaps.some((g) => sim.x > g.x0 && sim.x < g.x1);
   if (sim.y > level.floorY - WORLD.playerR && !overGap) {
-    for (const s of level.floorSpikes) {
-      if (sim.x >= s.x0 && sim.x <= s.x1) {
-        sim.status = 'dead';
-        return;
-      }
-    }
     sim.y = level.floorY - WORLD.playerR;
     // trampoline: medium-high boost, never a dead bounce
     if (sim.vy > 0) sim.vy = -Math.max(Math.abs(sim.vy) * 1.02, 620);
@@ -228,8 +225,19 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
     sim.airtime += dt;
   }
 
-  // fell into a floor gap — nothing to land on down there
+  // fell through a missing plank — nothing to land on down there
   if (sim.y > level.floorY + 150) {
+    sim.status = 'dead';
+    return;
+  }
+
+  // the fire cloud creeps up from behind; it hurries if it falls too far back,
+  // so camping in one spot always ends the same way
+  if (sim.t > WORLD.fireGraceSec) {
+    const catchup = Math.max(0, sim.x - sim.fireX - WORLD.fireMaxLagPx) * 0.5;
+    sim.fireX += (WORLD.fireSpeed + catchup) * dt;
+  }
+  if (sim.x < sim.fireX + 20) {
     sim.status = 'dead';
     return;
   }
@@ -267,18 +275,6 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
           sim.vy += ny * (560 - outSpeed);
         }
       }
-    }
-  }
-
-  // spinning/oscillating hazards (sweep vertically or horizontally)
-  for (const h of level.airHazards) {
-    const osc = h.oscAmp ? Math.sin(sim.t * h.oscSpeed + h.phase) * h.oscAmp : 0;
-    const hx = h.x + (h.axis === 'x' ? osc : 0);
-    const hy = h.y + (h.axis === 'y' ? osc : 0);
-    const d = Math.hypot(sim.x - hx, sim.y - hy);
-    if (d < h.r + WORLD.playerR - 2) {
-      sim.status = 'dead';
-      return;
     }
   }
 

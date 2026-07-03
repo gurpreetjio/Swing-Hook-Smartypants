@@ -76,8 +76,8 @@ for (let grade = 0; grade <= 8; grade++) {
     assert(lvl.finishX > lvl.anchors[lvl.anchors.length - 1].x, `g${grade} l${level}: finish before last anchor`);
     const vals = [
       ...lvl.anchors.flatMap((a) => [a.x, a.y]),
-      ...lvl.airHazards.flatMap((h) => [h.x, h.y, h.r]),
       ...lvl.planks.flatMap((p) => [p.x, p.y, p.w, p.h]),
+      ...lvl.floorPlanks.flatMap((t) => [t.x0, t.x1]),
       lvl.finishX,
     ];
     assert(vals.every(Number.isFinite), `g${grade} l${level}: non-finite geometry`);
@@ -91,24 +91,27 @@ for (let grade = 0; grade <= 8; grade++) {
     if (level >= 30) assert(towers.length >= 1, `g${grade} l${level}: missing floor towers`);
     if (level < 101) assert(walls.length === 0, `g${grade} l${level}: mid-air walls before expert stage`);
     if (level >= 101) assert(walls.length >= 1, `g${grade} l${level}: expert level missing walls`);
-    if (level < 21) assert(lvl.floorSpikes.length === 0, `g${grade} l${level}: spikes before intermediate`);
-    if (level < 51) assert(lvl.airHazards.length === 0, `g${grade} l${level}: moving obstacles before advanced`);
-    if (level >= 51) assert(lvl.airHazards.every((h) => h.oscAmp > 0), `g${grade} l${level}: advanced hazards must move`);
-    if (level < 101) assert(lvl.airHazards.every((h) => h.axis === 'y'), `g${grade} l${level}: x-sweepers before expert`);
     for (const p of lvl.planks) {
       assert(p.y > 200 && p.y < lvl.floorY - 60, `g${grade} l${level}: plank at bad height ${p.y}`);
       assert(p.y + p.h <= lvl.floorY, `g${grade} l${level}: plank reaches below the floor`);
     }
 
-    // floor gaps: nothing to land on, only from advanced levels
-    if (level < 51) assert(lvl.floorGaps.length === 0, `g${grade} l${level}: gaps before advanced`);
-    if (level >= 51) assert(lvl.floorGaps.length >= 1, `g${grade} l${level}: advanced level missing floor gaps`);
+    // ground planks: sorted, non-overlapping, covering the start solidly
+    assert(lvl.floorPlanks.length > 5, `g${grade} l${level}: no ground planks`);
+    for (let i = 1; i < lvl.floorPlanks.length; i++) {
+      assert(lvl.floorPlanks[i].x0 >= lvl.floorPlanks[i - 1].x1 - 1, `g${grade} l${level}: ground planks overlap`);
+    }
+    assert(lvl.floorPlanks[0].x0 <= -300, `g${grade} l${level}: ground should extend behind the start`);
+
+    // missing planks: none before level 10, guaranteed from 30, never near start
+    if (level < 10) assert(lvl.floorGaps.length === 0, `g${grade} l${level}: holes before level 10`);
+    if (level >= 30) assert(lvl.floorGaps.length >= 1, `g${grade} l${level}: level 30+ should have missing planks`);
     for (const g of lvl.floorGaps) {
-      assert(g.x1 > g.x0 + 100 && g.x0 >= 700 && g.x1 <= lvl.finishX - 250, `g${grade} l${level}: bad gap [${Math.round(g.x0)}, ${Math.round(g.x1)}]`);
-      assert(!lvl.floorSpikes.some((s) => s.x0 < g.x1 && s.x1 > g.x0), `g${grade} l${level}: spikes inside a gap`);
+      assert(g.x0 > 600, `g${grade} l${level}: hole too close to start (${Math.round(g.x0)})`);
+      assert(g.x1 > g.x0, `g${grade} l${level}: bad hole`);
     }
     for (let i = 1; i < lvl.floorGaps.length; i++) {
-      assert(lvl.floorGaps[i].x0 >= lvl.floorGaps[i - 1].x1, `g${grade} l${level}: overlapping gaps`);
+      assert(lvl.floorGaps[i].x0 >= lvl.floorGaps[i - 1].x1, `g${grade} l${level}: overlapping holes`);
     }
   }
 }
@@ -173,13 +176,10 @@ for (const seed of [12345, 999, 424242]) {
   assert(alvl.anchors.some((a) => a.kind === 'green'), `adventure ${seed}: no green hooks`);
   assert(alvl.anchors.some((a) => a.kind === 'red'), `adventure ${seed}: no red hooks`);
   assert(alvl.portals.length >= 10, `adventure ${seed}: too few portals (${alvl.portals.length})`);
+  assert(alvl.floorGaps.length >= 3, `adventure ${seed}: too few missing planks`);
   for (let i = 1; i < alvl.floorGaps.length; i++) {
     assert(alvl.floorGaps[i].x0 >= alvl.floorGaps[i - 1].x1, `adventure ${seed}: overlapping gaps`);
   }
-  assert(
-    !alvl.floorSpikes.some((s) => alvl.floorGaps.some((g) => s.x0 < g.x1 && s.x1 > g.x0)),
-    `adventure ${seed}: spikes inside gaps`
-  );
 }
 console.log('adventure gen: ok');
 
@@ -188,8 +188,7 @@ function makeLevel(anchors: Level['anchors'], portals: Level['portals'] = []): L
   return {
     anchors,
     portals,
-    airHazards: [],
-    floorSpikes: [],
+    floorPlanks: [{ x0: -600, x1: 1e9 }],
     floorGaps: [],
     planks: [],
     stars: [],
@@ -263,6 +262,25 @@ console.log('special hooks & portals: ok');
   sim.vy = 300;
   for (let t = 0; t < 2 && sim.status === 'alive'; t += 1 / 120) step(sim, lvl, 'swing', false, 1 / 120);
   assert(sim.status === 'dead', `falling into a floor gap should be fatal (status=${sim.status})`);
+}
+
+// ---- the fire catches campers: stand still long enough and you burn ----
+{
+  const lvl = makeLevel([{ x: 100000, y: 100 }]); // hooks far away; player just bounces in place
+  const sim = newSim(lvl);
+  sim.x = 200;
+  sim.vx = 0;
+  sim.vy = 0;
+  let burned = false;
+  for (let t = 0; t < 15 && !burned; t += 1 / 120) {
+    step(sim, lvl, 'swing', false, 1 / 120);
+    if (sim.status === 'dead') burned = true;
+  }
+  assert(burned, 'camping in place should end in fire');
+  assert(sim.t > WORLD.fireGraceSec, 'fire should respect the grace period');
+  // and a respawn resets the fire
+  respawn(sim, lvl);
+  assert(sim.fireX < lvl.startX, 'fire should reset behind the start on respawn');
 }
 
 // ---- physics: scripted bot must stay finite; expect forward progress & some wins ----

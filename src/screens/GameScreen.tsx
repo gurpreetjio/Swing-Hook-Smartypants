@@ -199,17 +199,6 @@ export function GameScreen({
   const sim = simRef.current;
   const cam = camRef.current;
 
-  // spike strips as triangle fans, precomputed per level (with x for culling)
-  const spikePolys = useMemo(() => {
-    const polys: { x: number; pts: string }[] = [];
-    for (const s of lvl.floorSpikes) {
-      for (let x = s.x0; x < s.x1; x += 22) {
-        polys.push({ x, pts: `${x},${lvl.floorY} ${x + 11},${lvl.floorY - 20} ${x + 22},${lvl.floorY}` });
-      }
-    }
-    return polys;
-  }, [lvl]);
-
   const targetIdx = sim.hooked === null && sim.status === 'alive' ? findAnchor(sim, lvl, mode) : null;
   const hookedAnchor = sim.hooked !== null ? lvl.anchors[sim.hooked] : null;
   const tilt = Math.max(-28, Math.min(28, sim.vx * 0.02));
@@ -218,19 +207,8 @@ export function GameScreen({
   // mount SVG nodes for what's near the camera, or the frame rate tanks
   const viewL = cam.x - 240;
   const viewR = cam.x + width + 240;
-
-  // visible floor pieces: the full span minus any gaps (nothing to land on there)
-  const floorSegs: { x0: number; x1: number }[] = [];
-  {
-    let cur = cam.x - 60;
-    const end = cam.x + width + 60;
-    for (const g of lvl.floorGaps) {
-      if (g.x1 < cur || g.x0 > end) continue;
-      if (g.x0 > cur) floorSegs.push({ x0: cur, x1: g.x0 });
-      cur = Math.max(cur, g.x1);
-    }
-    if (cur < end) floorSegs.push({ x0: cur, x1: end });
-  }
+  const fireOnScreen = sim.fireX > viewL - 200;
+  const fireGap = sim.x - sim.fireX;
 
   return (
     <View style={[styles.root, { backgroundColor: world.bg }]}>
@@ -258,19 +236,27 @@ export function GameScreen({
           })}
 
           <G x={-cam.x} y={-cam.y}>
-            {/* trampoline floor in striped-plank segments, broken by gaps */}
-            {floorSegs.map((s, i) => (
-              <G key={`fs${i}`}>
-                <Rect x={s.x0} y={lvl.floorY} width={s.x1 - s.x0} height={Math.max(0, cam.y + height - lvl.floorY)} fill={world.floor} />
-                <Rect x={s.x0} y={lvl.floorY} width={s.x1 - s.x0} height={7} fill={world.floorBounce} />
-                <Line x1={s.x0 + 6} y1={lvl.floorY + 8} x2={s.x1 - 6} y2={lvl.floorY + 8} stroke="#0c0e28" strokeWidth={16} />
-                <Line x1={s.x0 + 12} y1={lvl.floorY + 8} x2={s.x1 - 12} y2={lvl.floorY + 8} stroke="#f2f3ff" strokeWidth={7} strokeDasharray="26,20" opacity={0.9} />
-              </G>
-            ))}
-
-            {spikePolys.map((p, i) =>
-              p.x < viewL || p.x > viewR ? null : <Polygon key={`sp${i}`} points={p.pts} fill={theme.hazard} />
-            )}
+            {/* the ground: a row of thick striped planks fixed in the world
+                (so it visibly scrolls past), with holes where planks are missing */}
+            {lvl.floorPlanks.map((t, i) => {
+              if (t.x1 < viewL || t.x0 > viewR) return null;
+              return (
+                <G key={`ft${i}`}>
+                  <Rect x={t.x0 + 4} y={lvl.floorY - 2} width={t.x1 - t.x0 - 8} height={34} rx={17} fill="#0c0e28" />
+                  <Line
+                    x1={t.x0 + 20}
+                    y1={lvl.floorY + 15}
+                    x2={t.x1 - 20}
+                    y2={lvl.floorY + 15}
+                    stroke="#f2f3ff"
+                    strokeWidth={20}
+                    strokeDasharray="30,22"
+                    strokeLinecap="round"
+                    opacity={0.92}
+                  />
+                </G>
+              );
+            })}
 
             {/* bumper planks: horizontal bounce pads and vertical walls */}
             {lvl.planks.map((p, i) => {
@@ -349,20 +335,6 @@ export function GameScreen({
               );
             })}
 
-            {/* air hazards (vertical or horizontal sweepers) */}
-            {lvl.airHazards.map((h, i) => {
-              if (h.x + h.oscAmp < viewL || h.x - h.oscAmp > viewR) return null;
-              const osc = h.oscAmp ? Math.sin(sim.t * h.oscSpeed + h.phase) * h.oscAmp : 0;
-              const hx = h.x + (h.axis === 'x' ? osc : 0);
-              const hy = h.y + (h.axis === 'y' ? osc : 0);
-              return (
-                <G key={`h${i}`}>
-                  <Circle cx={hx} cy={hy} r={h.r} fill={theme.hazard} opacity={0.9} />
-                  <Circle cx={hx} cy={hy} r={h.r * 0.55} fill={theme.bgDeep} opacity={0.6} />
-                </G>
-              );
-            })}
-
             {/* rope */}
             {hookedAnchor ? (
               <Line
@@ -414,6 +386,25 @@ export function GameScreen({
             <G x={sim.x} y={sim.y} rotation={sim.hooked !== null ? tilt : spinRef.current}>
               <DoodleFigure skin={skin} pose={sim.hooked !== null ? 'hooked' : 'ball'} />
             </G>
+
+            {/* the fire cloud chasing from behind */}
+            {fireOnScreen && (
+              <G>
+                <Rect x={viewL - 200} y={cam.y - 100} width={Math.max(0, sim.fireX - (viewL - 200))} height={height + 200} fill="#d00000" opacity={0.55} />
+                <Rect x={sim.fireX - 90} y={cam.y - 100} width={90} height={height + 200} fill="#ff5722" opacity={0.6} />
+                {Array.from({ length: 9 }, (_, i) => {
+                  const fy = cam.y - 40 + i * ((height + 80) / 8);
+                  const wob = Math.sin(sim.t * 7 + i * 1.7) * 16;
+                  const r = 42 + Math.sin(sim.t * 9 + i * 2.3) * 14;
+                  return (
+                    <G key={`fl${i}`}>
+                      <Circle cx={sim.fireX + wob - 12} cy={fy} r={r} fill="#ff5722" opacity={0.8} />
+                      <Circle cx={sim.fireX + wob - 30} cy={fy + 12} r={r * 0.6} fill="#ffb703" opacity={0.75} />
+                    </G>
+                  );
+                })}
+              </G>
+            )}
           </G>
 
           {/* confetti burst (screen space) */}
@@ -466,6 +457,13 @@ export function GameScreen({
           <Text style={styles.retryText}>↻ {sim.retries}</Text>
         </View>
       </View>
+
+      {/* fire proximity warning */}
+      {phase === 'play' && sim.status === 'alive' && fireGap < 450 && sim.t > 1 && (
+        <View pointerEvents="none" style={styles.fireWarn}>
+          <Text style={[styles.fireWarnText, { opacity: 0.55 + 0.45 * Math.sin(sim.t * 12) }]}>🔥 RUN!</Text>
+        </View>
+      )}
 
       {hooksUsed === 0 && phase === 'play' && (
         <View pointerEvents="none" style={styles.hint}>
@@ -533,6 +531,8 @@ const styles = StyleSheet.create({
     borderColor: theme.line,
   },
   retryText: { color: theme.textDim, fontWeight: '800', fontSize: 13 },
+  fireWarn: { position: 'absolute', top: '40%', left: 24 },
+  fireWarnText: { fontSize: 30, fontWeight: '900', color: '#ffb703' },
   clearedWrap: { position: 'absolute', top: '22%', left: 0, right: 0, alignItems: 'center' },
   clearedText: {
     color: theme.text,
