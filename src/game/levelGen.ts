@@ -1,4 +1,5 @@
-import { mulberry32, randInt, hashString, Rng } from './rng';
+import { mulberry32, randInt, hashString, Rng, pick } from './rng';
+import { BONUS_TRAIL_IDS } from '../data/cosmetics';
 
 export interface Anchor {
   x: number;
@@ -14,29 +15,21 @@ export interface Portal {
   r: number;
 }
 
-export interface AirHazard {
-  x: number;
-  y: number;
-  r: number;
-  oscAmp: number; // oscillation amplitude (0 = static)
-  oscSpeed: number; // radians/sec
-  phase: number;
-  axis: 'x' | 'y'; // sweep direction (horizontal movers arrive in expert)
-}
-
-export interface FloorSpikes {
+// One ground plank tile. The ground is a row of these; where one is missing
+// there's a hole — fall in and you lose.
+export interface FloorTile {
   x0: number;
   x1: number;
 }
 
-// A hole in the floor: nothing to land on — fall in and it's a retry.
+// A hole in the ground where planks are missing.
 export interface FloorGap {
   x0: number;
   x1: number;
 }
 
 // Striped bumper plank: horizontal ones are bounce pads, vertical ones (h > w)
-// are walls that knock you backward. Both reflect the player away on contact.
+// are walls/towers that knock you backward. Both reflect the player away.
 export interface Plank {
   x: number; // top-left
   y: number;
@@ -51,19 +44,27 @@ export interface Star {
   o: number; // opacity
 }
 
+// A floating grab-it bonus that swaps your trail for a while when touched.
+export interface TrailBonus {
+  x: number;
+  y: number;
+  trailId: string;
+}
+
 export interface Level {
   anchors: Anchor[];
-  airHazards: AirHazard[];
-  floorSpikes: FloorSpikes[];
+  floorPlanks: FloorTile[];
   floorGaps: FloorGap[];
   planks: Plank[];
   portals: Portal[];
+  bonuses: TrailBonus[];
   stars: Star[];
   startX: number;
   startY: number;
   finishX: number;
-  floorY: number; // bouncy trampoline floor
+  floorY: number; // bouncy trampoline plank row
   ceilY: number;
+  fire: boolean; // Adventure runs only: the fire cloud chases from behind
 }
 
 export const WORLD = {
@@ -73,11 +74,17 @@ export const WORLD = {
   hookRange: 350,
   grappleRange: 430,
   playerR: 14,
+  portalSpeed: 2200, // dead-horizontal zoom speed out of a portal
+  fallGracePx: 300, // extra room below the floor to still catch a hook
+  bonusTrailSec: 7, // how long a grabbed trail bonus lasts
+  // the fire cloud that chases from behind: camp too long and it catches you
+  fireSpeed: 120,
+  fireGraceSec: 2.5,
+  fireMaxLagPx: 1000, // beyond this the fire speeds up to stay in the chase
+  fireStartOffset: 560, // how far behind the start it spawns
 };
 
 // ---- stages: the classic difficulty arc ----
-// 1-20 beginner, 21-50 intermediate, 51-100 advanced, 101-200 expert,
-// beyond 200 endless challenge levels with extreme hook placement.
 export type Stage = 'beginner' | 'intermediate' | 'advanced' | 'expert' | 'challenge';
 
 export function stageForLevel(level: number): Stage {
@@ -131,12 +138,59 @@ const STAGE_PARAMS: Record<Stage, { gap: [number, number]; y: [number, number] }
   challenge: { gap: [245, 360], y: [50, 380] },
 };
 
+// Ground planks: wide, thick tiles laid in a row. Some go missing (that's the
+// hole you can fall through). The first stretch is always solid.
+export const PLANK_TILE = 230;
+const SAFE_FLOOR_X = 620;
+
+function buildFloor(
+  rng: Rng,
+  missChance: number,
+  allowDouble: boolean,
+  minGaps: number,
+  endX: number
+): { floorPlanks: FloorTile[]; floorGaps: FloorGap[] } {
+  const floorPlanks: FloorTile[] = [];
+  const missing: FloorGap[] = [];
+  let run = 0; // consecutive missing tiles
+  const eligible: number[] = [];
+  for (let x = -600; x < endX; x += PLANK_TILE) {
+    const canMiss = x > SAFE_FLOOR_X && x < endX - PLANK_TILE * 2 && (run === 0 || (allowDouble && run === 1));
+    if (canMiss && rng() < missChance) {
+      missing.push({ x0: x, x1: x + PLANK_TILE });
+      run += 1;
+    } else {
+      floorPlanks.push({ x0: x, x1: x + PLANK_TILE });
+      if (x > SAFE_FLOOR_X && x < endX - PLANK_TILE * 2) eligible.push(floorPlanks.length - 1);
+      run = 0;
+    }
+  }
+  // guarantee the promised number of holes
+  while (missing.length < minGaps && eligible.length > 0) {
+    const pick = eligible.splice(Math.floor(rng() * eligible.length), 1)[0];
+    const tile = floorPlanks[pick];
+    missing.push({ x0: tile.x0, x1: tile.x1 });
+    floorPlanks[pick] = { x0: NaN, x1: NaN }; // mark for removal
+  }
+  const planksOut = floorPlanks.filter((t) => Number.isFinite(t.x0));
+  // merge adjacent missing tiles into single gaps
+  missing.sort((a, b) => a.x0 - b.x0);
+  const floorGaps: FloorGap[] = [];
+  for (const g of missing) {
+    const last = floorGaps[floorGaps.length - 1];
+    if (last && g.x0 <= last.x1 + 1) last.x1 = Math.max(last.x1, g.x1);
+    else floorGaps.push({ ...g });
+  }
+  return { floorPlanks: planksOut, floorGaps };
+}
+
 /**
- * Deterministic level from (grade, level, mode salt), following the classic
- * stage arc: beginner levels teach swing + bounce pads with minimal obstacles;
- * spikes arrive in intermediate, moving obstacles in advanced, walls and
- * far-apart hooks in expert, and challenge levels (201+) run forever with
- * extreme, misleading hook angles.
+ * Deterministic level from (grade, level, mode salt). The stage arc: beginner
+ * teaches swing + bounce pads on solid ground; missing floor planks appear
+ * from level 10 (guaranteed from 30); towers from 30; hook ladders from 40;
+ * walls and far-apart hooks in expert; challenge (201+) runs forever with
+ * extreme, misleading hook angles. No instant-kill obstacles — the dangers are
+ * holes in the ground and the fire that chases you.
  */
 export function generateLevel(grade: number, level: number, seedSalt = 'adv'): Level {
   const rng = mulberry32(hashString(`${seedSalt}:${grade}:${level}`));
@@ -151,7 +205,6 @@ export function generateLevel(grade: number, level: number, seedSalt = 'adv'): L
   for (let i = 0; i < count; i++) {
     x += randInt(rng, p.gap[0], p.gap[1]);
     let y = randInt(rng, p.y[0], p.y[1]);
-    // challenge levels: some hooks sit at misleading, extra-low angles
     if (stage === 'challenge' && rng() < 0.25) y = randInt(rng, 330, 430);
     anchors.push({ x, y });
     // hook ladders: an occasional vertical column of hooks (from level 40)
@@ -180,7 +233,6 @@ export function generateLevel(grade: number, level: number, seedSalt = 'adv'): L
     const n = Math.min(maxPads, 1 + Math.floor((level - 8) / 14));
     for (let i = 0; i < n; i++) {
       const w = randInt(rng, 110, 180 + Math.round(diff * 60));
-      // expert+ pads appear unpredictably high or low
       const yRange: [number, number] = stage === 'expert' || stage === 'challenge' ? [240, 540] : [300, 500];
       planks.push({ x: midBetween(rng) - w / 2 + randInt(rng, -40, 40), y: randInt(rng, yRange[0], yRange[1]), w, h: 22 });
     }
@@ -205,51 +257,18 @@ export function generateLevel(grade: number, level: number, seedSalt = 'adv'): L
     }
   }
 
-  // floor gaps — nothing to land on: from advanced levels
-  const floorGaps: FloorGap[] = [];
-  if (level >= 51) {
-    const n = Math.min(4, 1 + Math.floor((level - 51) / 40));
-    let attempts = 0;
-    while (floorGaps.length < n && attempts++ < 14) {
-      const cx = midBetween(rng);
-      const w = randInt(rng, 160, 260 + Math.round(diff * 120));
-      const x0 = Math.max(700, cx - w / 2);
-      const x1 = Math.min(finishX - 250, cx + w / 2);
-      if (x1 - x0 > 100 && !floorGaps.some((g) => x0 < g.x1 + 120 && x1 > g.x0 - 120)) {
-        floorGaps.push({ x0, x1 });
-      }
-    }
-    floorGaps.sort((a, b) => a.x0 - b.x0);
-  }
+  // ground: missing planks appear from level 10, guaranteed from 30,
+  // double-wide holes in expert and beyond
+  const missChance = level < 10 ? 0 : Math.min(0.18, 0.05 + diff * 0.1);
+  const minGaps = level >= 30 ? Math.min(3, 1 + Math.floor(level / 80)) : 0;
+  const { floorPlanks, floorGaps } = buildFloor(rng, missChance, level > 120, minGaps, finishX + 400);
 
-  // floor spikes ("red zones"): from intermediate on; never inside a gap
-  const floorSpikes: FloorSpikes[] = [];
-  if (level >= 21) {
-    const n = Math.min(5, 1 + Math.floor((level - 21) / 35));
-    for (let i = 0; i < n; i++) {
-      const a = anchors[randInt(rng, 1, anchors.length - 1)];
-      const w = randInt(rng, 120, 200 + Math.round(diff * 120));
-      const s = { x0: a.x - w / 2, x1: a.x + w / 2 };
-      if (!floorGaps.some((g) => s.x0 < g.x1 && s.x1 > g.x0)) floorSpikes.push(s);
-    }
-  }
-
-  // moving obstacles: from advanced on, always oscillating; expert levels add
-  // horizontal sweepers
-  const airHazards: AirHazard[] = [];
-  if (level >= 51) {
-    const n = Math.min(6, 1 + Math.floor((level - 51) / 25));
-    for (let i = 0; i < n; i++) {
-      airHazards.push({
-        x: midBetween(rng),
-        y: randInt(rng, 240, 480),
-        r: randInt(rng, 22, 30 + Math.round(diff * 12)),
-        oscAmp: randInt(rng, 40, 120),
-        oscSpeed: 1 + rng() * (1.4 + diff),
-        phase: rng() * Math.PI * 2,
-        axis: level >= 101 && rng() < 0.5 ? 'x' : 'y',
-      });
-    }
+  // trail bonuses float between some hooks, up high where you swing past them
+  const bonuses: TrailBonus[] = [];
+  const nBonus = 1 + Math.floor(rng() * 2);
+  for (let i = 0; i < nBonus; i++) {
+    const a = anchors[randInt(rng, 1, anchors.length - 2)];
+    bonuses.push({ x: a.x + randInt(rng, -30, 120), y: randInt(rng, 200, 380), trailId: pick(rng, BONUS_TRAIL_IDS) });
   }
 
   const stars: Star[] = [];
@@ -264,25 +283,26 @@ export function generateLevel(grade: number, level: number, seedSalt = 'adv'): L
 
   return {
     anchors,
-    airHazards,
-    floorSpikes,
+    floorPlanks,
     floorGaps,
     planks,
     portals: [],
+    bonuses,
     stars,
     startX: 60,
     startY: 340,
     finishX,
     floorY,
     ceilY: -80,
+    fire: false,
   };
 }
 
 /**
  * The Adventure run: one enormous endless course scored in meters (10px = 1m).
- * Difficulty ramps with distance. Sprinkled through it: portals that zoom you
- * right, green hooks that turbo-charge your spin, and red hooks that sling you
- * backward. The run ends when you fall — there is no finish line to speak of.
+ * Portals zoom you right, green hooks turbo-charge your spin, red hooks sling
+ * you backward. The ground loses more planks the further you go, and the fire
+ * is always behind you.
  */
 export function generateAdventureLevel(seed: number): Level {
   const rng = mulberry32(seed >>> 0);
@@ -290,9 +310,7 @@ export function generateAdventureLevel(seed: number): Level {
   const anchors: Anchor[] = [];
   const portals: Portal[] = [];
   const planks: Plank[] = [];
-  const floorSpikes: FloorSpikes[] = [];
-  const floorGaps: FloorGap[] = [];
-  const airHazards: AirHazard[] = [];
+  const bonuses: TrailBonus[] = [];
 
   const N = 220;
   let x = 380;
@@ -310,32 +328,12 @@ export function generateAdventureLevel(seed: number): Level {
       const w = randInt(rng, 110, 190);
       planks.push({ x: x + 60, y: randInt(rng, 300, 520), w, h: 22 });
     }
-    if (i > 12 && rng() < 0.1) floorSpikes.push({ x0: x - 90, x1: x + 90 });
-    if (i > 20 && rng() < 0.08) floorGaps.push({ x0: x + 60, x1: x + 60 + randInt(rng, 160, 320) });
-    if (i > 15 && rng() < 0.1) {
-      airHazards.push({
-        x: x + 120,
-        y: randInt(rng, 240, 480),
-        r: randInt(rng, 22, 34),
-        oscAmp: randInt(rng, 40, 120),
-        oscSpeed: 1 + rng() * 2,
-        phase: rng() * Math.PI * 2,
-        axis: rng() < 0.4 ? 'x' : 'y',
-      });
-    }
+    if (i > 4 && rng() < 0.09) bonuses.push({ x: x + randInt(rng, 40, 130), y: randInt(rng, 190, 400), trailId: pick(rng, BONUS_TRAIL_IDS) });
   }
-
-  // tidy overlaps: merge gaps, then drop spikes that fall inside a gap
-  floorGaps.sort((a, b) => a.x0 - b.x0);
-  const gaps: FloorGap[] = [];
-  for (const g of floorGaps) {
-    const last = gaps[gaps.length - 1];
-    if (last && g.x0 < last.x1 + 120) last.x1 = Math.max(last.x1, g.x1);
-    else gaps.push({ ...g });
-  }
-  const spikes = floorSpikes.filter((s) => !gaps.some((g) => s.x0 < g.x1 && s.x1 > g.x0));
 
   const finishX = x + 600;
+  const { floorPlanks, floorGaps } = buildFloor(rng, 0.11, true, 4, finishX + 400);
+
   const stars: Star[] = [];
   for (let i = 0; i < 140; i++) {
     stars.push({ x: rng() * (finishX + 600), y: rng() * floorY * 0.85, r: 1 + rng() * 2, o: 0.25 + rng() * 0.5 });
@@ -343,16 +341,17 @@ export function generateAdventureLevel(seed: number): Level {
 
   return {
     anchors,
-    airHazards,
-    floorSpikes: spikes,
-    floorGaps: gaps,
+    floorPlanks,
+    floorGaps,
     planks,
     portals,
+    bonuses,
     stars,
     startX: 60,
     startY: 340,
     finishX,
     floorY,
     ceilY: -80,
+    fire: true,
   };
 }

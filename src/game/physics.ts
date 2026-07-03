@@ -19,6 +19,10 @@ export interface Sim {
   dashUntil: number; // portal zoom window: speed cap is lifted
   portalCdUntil: number; // don't re-trigger the same portal instantly
   consumed: Set<number>; // one-shot anchors (red hooks) already used this attempt
+  fireX: number; // right edge of the fire cloud chasing from behind
+  collected: Set<number>; // trail-bonus pickups already grabbed
+  trailOverride: string | null; // temporary trail from a bonus pickup
+  trailUntil: number; // when the bonus trail expires
 }
 
 export function newSim(level: Level): Sim {
@@ -39,6 +43,10 @@ export function newSim(level: Level): Sim {
     dashUntil: 0,
     portalCdUntil: 0,
     consumed: new Set(),
+    fireX: level.startX - WORLD.fireStartOffset,
+    collected: new Set(),
+    trailOverride: null,
+    trailUntil: 0,
   };
 }
 
@@ -56,6 +64,10 @@ export function respawn(sim: Sim, level: Level): void {
   sim.dashUntil = 0;
   sim.portalCdUntil = 0;
   sim.consumed.clear();
+  sim.fireX = level.startX - WORLD.fireStartOffset;
+  sim.collected.clear();
+  sim.trailOverride = null;
+  sim.trailUntil = 0;
 }
 
 /**
@@ -78,7 +90,10 @@ export function findAnchor(sim: Sim, level: Level, mode: GameMode): number | nul
     let score: number;
     if (d <= range) {
       score = 1000 + dx - Math.abs(d - range * 0.62) * 0.5;
-      if (mode === 'swing' && dy > 0) score -= dy * 2; // prefer overhead points
+      // prefer overhead points for plain hooks; special hooks skip that so a
+      // red/green hook below or level with you is still easy to grab
+      if (mode === 'swing' && dy > 0 && !a.kind) score -= dy * 2;
+      if (a.kind) score += 350; // don't let a nearby plain hook steal the tap
     } else {
       score = -d; // out of range: nearest forward hook wins
     }
@@ -98,8 +113,12 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
   if (sim.status !== 'alive') return;
   sim.t += dt;
 
+  // a portal dash flings you flat and gravity-free; hooking is suspended so the
+  // horizontal zoom stays clean until the window (or a chained portal) ends
+  const dashing = sim.t < sim.dashUntil;
+
   // hook / release
-  if (holding && sim.hooked === null) {
+  if (!dashing && holding && sim.hooked === null) {
     const idx = findAnchor(sim, level, mode);
     if (idx !== null) {
       sim.hooked = idx;
@@ -116,11 +135,15 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
         sim.vx += ((a.x - sim.x) / d) * 260;
         sim.vy += ((a.y - sim.y) / d) * 260;
       }
-      // red hooks sling you back the way you came from, then vanish —
-      // one use per attempt, and the rope never actually holds
+      // red hooks fling you straight THROUGH the hook to the far side, then
+      // vanish. The farther away you grabbed from, the faster the sling.
       if (a.kind === 'red') {
-        sim.vx = -sim.vx * 1.15;
-        sim.vy *= 0.9;
+        const dx = a.x - sim.x;
+        const dy = a.y - sim.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const speed = Math.min(2200, 640 + dist * 3.4);
+        sim.vx = (dx / dist) * speed;
+        sim.vy = (dy / dist) * speed;
         sim.consumed.add(idx);
         sim.hooked = null;
       }
@@ -131,8 +154,13 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
     sim.hooked = null;
   }
 
-  // forces
-  sim.vy += WORLD.gravity * dt;
+  // forces — a portal dash cancels gravity and pins you dead horizontal
+  if (dashing) {
+    sim.vx = Math.max(sim.vx, WORLD.portalSpeed);
+    sim.vy = 0;
+  } else {
+    sim.vy += WORLD.gravity * dt;
+  }
 
   if (sim.hooked !== null && mode === 'grapple') {
     const a = level.anchors[sim.hooked];
@@ -162,14 +190,17 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
     sim.ropeLen = Math.max(90, sim.ropeLen - reel * dt);
   }
 
-  // portals: zoom you really fast to the right (Adventure run only)
-  for (const pt of level.portals) {
+  // portals: zoom you dead-horizontal to the right for a full second, no
+  // gravity. Hitting another portal mid-zoom refreshes the window, so a row of
+  // portals chains into one long flat rocket ride.
+  for (let i = 0; i < level.portals.length; i++) {
     if (sim.t < sim.portalCdUntil) break;
+    const pt = level.portals[i];
     if (Math.hypot(sim.x - pt.x, sim.y - pt.y) < pt.r + WORLD.playerR) {
-      sim.vx = 2200;
-      sim.vy *= 0.3;
-      sim.dashUntil = sim.t + 0.55;
-      sim.portalCdUntil = sim.t + 0.9;
+      sim.vx = WORLD.portalSpeed;
+      sim.vy = 0;
+      sim.dashUntil = sim.t + 1.0;
+      sim.portalCdUntil = sim.t + 0.15; // only stops re-firing the same portal
       sim.hooked = null; // the zoom rips you off the rope
       break;
     }
@@ -185,6 +216,18 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
   // integrate
   sim.x += sim.vx * dt;
   sim.y += sim.vy * dt;
+
+  // trail-bonus pickups: grab one and your trail changes for a while
+  if (sim.trailOverride && sim.t > sim.trailUntil) sim.trailOverride = null;
+  for (let i = 0; i < level.bonuses.length; i++) {
+    if (sim.collected.has(i)) continue;
+    const b = level.bonuses[i];
+    if (Math.hypot(sim.x - b.x, sim.y - b.y) < 34 + WORLD.playerR) {
+      sim.collected.add(i);
+      sim.trailOverride = b.trailId;
+      sim.trailUntil = sim.t + WORLD.bonusTrailSec;
+    }
+  }
 
   // rope constraint (swing only — grapple is a free pull)
   if (sim.hooked !== null && mode === 'swing') {
@@ -211,15 +254,9 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
     if (sim.vy < 0) sim.vy = -sim.vy * 0.4;
   }
 
-  // trampoline floor (deadly where spiked, absent over gaps)
+  // trampoline plank floor (absent where planks are missing)
   const overGap = level.floorGaps.some((g) => sim.x > g.x0 && sim.x < g.x1);
   if (sim.y > level.floorY - WORLD.playerR && !overGap) {
-    for (const s of level.floorSpikes) {
-      if (sim.x >= s.x0 && sim.x <= s.x1) {
-        sim.status = 'dead';
-        return;
-      }
-    }
     sim.y = level.floorY - WORLD.playerR;
     // trampoline: medium-high boost, never a dead bounce
     if (sim.vy > 0) sim.vy = -Math.max(Math.abs(sim.vy) * 1.02, 620);
@@ -228,10 +265,24 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
     sim.airtime += dt;
   }
 
-  // fell into a floor gap — nothing to land on down there
-  if (sim.y > level.floorY + 150) {
+  // fell through a missing plank — but there's a little grace below the floor
+  // so you can still fling a rope up and save yourself before it's over
+  if (sim.y > level.floorY + WORLD.fallGracePx) {
     sim.status = 'dead';
     return;
+  }
+
+  // the fire cloud (Adventure runs only) creeps up from behind; it hurries if
+  // it falls too far back, so camping in one spot always ends the same way
+  if (level.fire) {
+    if (sim.t > WORLD.fireGraceSec) {
+      const catchup = Math.max(0, sim.x - sim.fireX - WORLD.fireMaxLagPx) * 0.5;
+      sim.fireX += (WORLD.fireSpeed + catchup) * dt;
+    }
+    if (sim.x < sim.fireX + 20) {
+      sim.status = 'dead';
+      return;
+    }
   }
 
   // mid-air bumper planks: reflect the player away with a boost
@@ -267,18 +318,6 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
           sim.vy += ny * (560 - outSpeed);
         }
       }
-    }
-  }
-
-  // spinning/oscillating hazards (sweep vertically or horizontally)
-  for (const h of level.airHazards) {
-    const osc = h.oscAmp ? Math.sin(sim.t * h.oscSpeed + h.phase) * h.oscAmp : 0;
-    const hx = h.x + (h.axis === 'x' ? osc : 0);
-    const hy = h.y + (h.axis === 'y' ? osc : 0);
-    const d = Math.hypot(sim.x - hx, sim.y - hy);
-    if (d < h.r + WORLD.playerR - 2) {
-      sim.status = 'dead';
-      return;
     }
   }
 
