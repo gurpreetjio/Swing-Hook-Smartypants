@@ -122,6 +122,32 @@ for (let level = 1; level <= 260; level += 13) {
 }
 console.log('findAnchor: always hookable, ok');
 
+// ---- tap-ratchet: rapid tapping must climb the rope faster than holding ----
+function reelTest(tapping: boolean): number {
+  const lvl = generateLevel(0, 1);
+  const a = lvl.anchors[0];
+  const sim = newSim(lvl);
+  sim.x = a.x - 10;
+  sim.y = Math.min(lvl.floorY - 40, a.y + 420);
+  sim.vx = 0;
+  sim.vy = 0;
+  let minD = Infinity;
+  const dt = 1 / 120;
+  for (let t = 0; t < 2.5 && sim.status === 'alive'; t += dt) {
+    const holding = tapping ? t % 0.15 < 0.09 : true; // ~6.7 taps/sec vs constant hold
+    step(sim, lvl, 'swing', holding, dt);
+    minD = Math.min(minD, Math.hypot(sim.x - a.x, sim.y - a.y));
+  }
+  return minD;
+}
+const holdDist = reelTest(false);
+const tapDist = reelTest(true);
+assert(
+  tapDist < holdDist - 80,
+  `rapid taps should reel up much faster (tap minDist ${Math.round(tapDist)} vs hold ${Math.round(holdDist)})`
+);
+console.log(`tap-ratchet: tap climbs to ${Math.round(tapDist)}px vs hold ${Math.round(holdDist)}px — ok`);
+
 // ---- physics: scripted bot must stay finite; expect forward progress & some wins ----
 let wins = 0;
 let deaths = 0;

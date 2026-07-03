@@ -13,6 +13,9 @@ export interface Sim {
   retries: number;
   airtime: number; // seconds off the floor while alive (style bonus)
   status: 'alive' | 'dead' | 'win';
+  lastHooked: number | null; // for the tap-ratchet: which anchor we just released
+  lastReleaseT: number;
+  reelBoostUntil: number; // fast reel-in window after a quick re-tap
 }
 
 export function newSim(level: Level): Sim {
@@ -27,6 +30,9 @@ export function newSim(level: Level): Sim {
     retries: 0,
     airtime: 0,
     status: 'alive',
+    lastHooked: null,
+    lastReleaseT: -1e9,
+    reelBoostUntil: 0,
   };
 }
 
@@ -38,6 +44,9 @@ export function respawn(sim: Sim, level: Level): void {
   sim.hooked = null;
   sim.status = 'alive';
   sim.retries += 1;
+  sim.lastHooked = null;
+  sim.lastReleaseT = -1e9;
+  sim.reelBoostUntil = 0;
 }
 
 /**
@@ -85,11 +94,22 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
     if (idx !== null) {
       sim.hooked = idx;
       const a = level.anchors[idx];
+      const d = Math.hypot(a.x - sim.x, a.y - sim.y);
       // attach at the current distance (never shorter — that would teleport the
       // player onto the rope circle); long ropes reel in over time instead
-      sim.ropeLen = Math.max(80, Math.hypot(a.x - sim.x, a.y - sim.y));
+      sim.ropeLen = Math.max(80, d);
+      // tap-ratchet: quickly re-tapping the same hook climbs the rope — a fast
+      // reel window plus a kick toward the anchor, so rapid taps pull you up
+      // much faster than holding
+      if (idx === sim.lastHooked && sim.t - sim.lastReleaseT < 0.45 && d > 1) {
+        sim.reelBoostUntil = sim.t + 0.32;
+        sim.vx += ((a.x - sim.x) / d) * 260;
+        sim.vy += ((a.y - sim.y) / d) * 260;
+      }
     }
   } else if (!holding && sim.hooked !== null) {
+    sim.lastHooked = sim.hooked;
+    sim.lastReleaseT = sim.t;
     sim.hooked = null;
   }
 
@@ -115,8 +135,10 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
     sim.vx *= boost;
     sim.vy *= boost;
     // reel-in adds momentum and keeps arcs tight; long ropes (grabbed from far
-    // away) reel much faster so the swoop recovers instead of dragging
-    const reel = 26 + Math.max(0, sim.ropeLen - 340) * 1.4;
+    // away) reel much faster so the swoop recovers instead of dragging, and the
+    // tap-ratchet window reels hardest of all
+    const base = sim.t < sim.reelBoostUntil ? 780 : 26;
+    const reel = base + Math.max(0, sim.ropeLen - 340) * 1.4;
     sim.ropeLen = Math.max(90, sim.ropeLen - reel * dt);
   }
 
