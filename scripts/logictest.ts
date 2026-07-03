@@ -3,7 +3,7 @@
  */
 import { generateQuestion } from '../src/math/mathGen';
 import { generateLevel } from '../src/game/levelGen';
-import { newSim, step } from '../src/game/physics';
+import { findAnchor, newSim, step } from '../src/game/physics';
 import { weeklyRotation } from '../src/data/cosmetics';
 import { rankForXp, RANKS } from '../src/data/ranks';
 import { isoWeekKey, mulberry32 } from '../src/game/rng';
@@ -73,6 +73,29 @@ for (let grade = 0; grade <= 8; grade++) {
   }
 }
 console.log('levelGen: ok');
+
+// ---- regression: a tap must ALWAYS find a hook while any anchor is ahead ----
+for (let level = 1; level <= 200; level += 13) {
+  for (const mode of ['swing', 'grapple'] as const) {
+    const lvl = generateLevel(4, level, mode === 'swing' ? 'adv' : 'grap');
+    const lastX = lvl.anchors[lvl.anchors.length - 1].x;
+    // probe positions all over the course, including far from any anchor
+    for (let px = lvl.startX; px < lastX; px += 137) {
+      for (const py of [100, 350, lvl.floorY - 20]) {
+        const sim = newSim(lvl);
+        sim.x = px;
+        sim.y = py;
+        const idx = findAnchor(sim, lvl, mode);
+        assert(idx !== null, `${mode} l${level}: no hookable anchor from (${px}, ${py})`);
+        if (idx !== null) {
+          const dx = lvl.anchors[idx].x - px;
+          assert(dx >= -80, `${mode} l${level}: hooked an anchor far behind (dx=${Math.round(dx)})`);
+        }
+      }
+    }
+  }
+}
+console.log('findAnchor: always hookable, ok');
 
 // ---- physics: scripted bot must stay finite; expect forward progress & some wins ----
 let wins = 0;

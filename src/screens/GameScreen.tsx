@@ -186,7 +186,11 @@ export function GameScreen({
               const pts = `${a.x},${a.y - r} ${a.x + r},${a.y} ${a.x},${a.y + r} ${a.x - r},${a.y}`;
               return (
                 <G key={`a${i}`}>
-                  {target ? <Circle cx={a.x} cy={a.y} r={20 + Math.sin(sim.t * 6) * 4} fill="none" stroke={theme.anchorActive} strokeWidth={2} opacity={0.8} /> : null}
+                  {/* dashed targeting ring, like the original's hook halos */}
+                  {!target && !active ? (
+                    <Circle cx={a.x} cy={a.y} r={26} fill="none" stroke={theme.anchor} strokeWidth={1.5} strokeDasharray="5,7" opacity={0.3} />
+                  ) : null}
+                  {target ? <Circle cx={a.x} cy={a.y} r={22 + Math.sin(sim.t * 6) * 4} fill="none" stroke={theme.anchorActive} strokeWidth={2.5} strokeDasharray="6,5" opacity={0.9} /> : null}
                   <Polygon points={pts} fill={active ? theme.anchorActive : theme.anchor} opacity={active ? 1 : 0.9} />
                   <Circle cx={a.x} cy={a.y} r={3.5} fill={theme.bgDeep} />
                 </G>
@@ -254,6 +258,9 @@ export function GameScreen({
         </Pressable>
         <View style={styles.levelBadge}>
           <Text style={styles.levelText}>{levelLabel}</Text>
+          <View style={styles.progTrack}>
+            <View style={[styles.progFill, { width: `${Math.min(100, Math.max(0, (sim.x / lvl.finishX) * 100))}%` }]} />
+          </View>
           <Text style={styles.modeText}>{mode === 'swing' ? '🪝 SWING' : '🧲 GRAPPLE'}</Text>
         </View>
         <View style={styles.retryBadge}>
@@ -307,6 +314,8 @@ const styles = StyleSheet.create({
   exitText: { color: theme.text, fontSize: 16, fontWeight: '900' },
   levelBadge: { alignItems: 'center' },
   levelText: { color: theme.text, fontWeight: '900', fontSize: 17 },
+  progTrack: { width: 130, height: 5, borderRadius: 3, backgroundColor: '#1a1d4acc', marginTop: 4, marginBottom: 2, overflow: 'hidden' },
+  progFill: { height: '100%', backgroundColor: theme.accent, borderRadius: 3 },
   modeText: { color: theme.textDim, fontWeight: '700', fontSize: 11, letterSpacing: 1.5 },
   retryBadge: {
     backgroundColor: theme.panelLight,

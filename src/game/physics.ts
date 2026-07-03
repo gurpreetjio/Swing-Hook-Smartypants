@@ -41,9 +41,10 @@ export function respawn(sim: Sim, level: Level): void {
 }
 
 /**
- * Choose the anchor to hook: prefers the most forward anchor in range.
- * Swing mode requires the anchor to be above-ish the player (it's a pendulum);
- * grapple mode takes anything in range (it's a pull).
+ * Choose the anchor to hook. A tap should ALWAYS throw the rope (like the
+ * original): prefer the most forward anchor in comfortable range, but if
+ * nothing is in range, grab the nearest hook ahead no matter how far — the
+ * rope attaches at full length and reels in.
  */
 export function findAnchor(sim: Sim, level: Level, mode: GameMode): number | null {
   const range = mode === 'swing' ? WORLD.hookRange : WORLD.grappleRange;
@@ -54,10 +55,14 @@ export function findAnchor(sim: Sim, level: Level, mode: GameMode): number | nul
     const dx = a.x - sim.x;
     const dy = a.y - sim.y;
     const d = Math.hypot(dx, dy);
-    if (d > range || d < 30) continue;
-    if (dx < -100) continue; // don't hook far behind
-    if (mode === 'swing' && dy > 60) continue; // pendulum needs an overhead point
-    const score = dx - Math.abs(d - range * 0.62) * 0.5;
+    if (dx < -80) continue; // don't hook far behind
+    let score: number;
+    if (d <= range) {
+      score = 1000 + dx - Math.abs(d - range * 0.62) * 0.5;
+      if (mode === 'swing' && dy > 0) score -= dy * 2; // prefer overhead points
+    } else {
+      score = -d; // out of range: nearest forward hook wins
+    }
     if (score > bestScore) {
       bestScore = score;
       best = i;
@@ -80,7 +85,9 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
     if (idx !== null) {
       sim.hooked = idx;
       const a = level.anchors[idx];
-      sim.ropeLen = Math.max(80, Math.min(mode === 'swing' ? 320 : 999, Math.hypot(a.x - sim.x, a.y - sim.y)));
+      // attach at the current distance (never shorter — that would teleport the
+      // player onto the rope circle); long ropes reel in over time instead
+      sim.ropeLen = Math.max(80, Math.hypot(a.x - sim.x, a.y - sim.y));
     }
   } else if (!holding && sim.hooked !== null) {
     sim.hooked = null;
@@ -107,8 +114,10 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
     const boost = 1 + 0.35 * dt;
     sim.vx *= boost;
     sim.vy *= boost;
-    // slow reel-in adds momentum and keeps arcs tight
-    sim.ropeLen = Math.max(90, sim.ropeLen - 26 * dt);
+    // reel-in adds momentum and keeps arcs tight; long ropes (grabbed from far
+    // away) reel much faster so the swoop recovers instead of dragging
+    const reel = 26 + Math.max(0, sim.ropeLen - 340) * 1.4;
+    sim.ropeLen = Math.max(90, sim.ropeLen - reel * dt);
   }
 
   const cap = mode === 'swing' ? WORLD.maxSpeed : WORLD.grappleMaxSpeed;
