@@ -70,6 +70,11 @@ export const WEEKLY_SKINS: Skin[] = [
 
 export const WEEKLY_SKIN_COST = 250;
 
+// Flashy trails that float in levels as grab-and-go bonuses (parachutes,
+// rainbow, etc.). Collecting one temporarily swaps your trail for a big show.
+export const BONUS_TRAIL_IDS = ['t_rainbow', 't_chutes', 't_fire', 't_sparkle', 't_balloons', 't_hearts'];
+export const BONUS_TRAIL_SECONDS = 7;
+
 export const ROPES: Rope[] = [
   { id: 'r_basic', name: 'Classic Line', color: '#c8cdf5', cost: 0 },
   { id: 'r_gold', name: 'Gold Thread', color: '#ffd166', cost: 100 },

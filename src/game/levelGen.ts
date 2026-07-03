@@ -1,4 +1,5 @@
-import { mulberry32, randInt, hashString, Rng } from './rng';
+import { mulberry32, randInt, hashString, Rng, pick } from './rng';
+import { BONUS_TRAIL_IDS } from '../data/cosmetics';
 
 export interface Anchor {
   x: number;
@@ -43,12 +44,20 @@ export interface Star {
   o: number; // opacity
 }
 
+// A floating grab-it bonus that swaps your trail for a while when touched.
+export interface TrailBonus {
+  x: number;
+  y: number;
+  trailId: string;
+}
+
 export interface Level {
   anchors: Anchor[];
   floorPlanks: FloorTile[];
   floorGaps: FloorGap[];
   planks: Plank[];
   portals: Portal[];
+  bonuses: TrailBonus[];
   stars: Star[];
   startX: number;
   startY: number;
@@ -65,6 +74,9 @@ export const WORLD = {
   hookRange: 350,
   grappleRange: 430,
   playerR: 14,
+  portalSpeed: 2200, // dead-horizontal zoom speed out of a portal
+  fallGracePx: 300, // extra room below the floor to still catch a hook
+  bonusTrailSec: 7, // how long a grabbed trail bonus lasts
   // the fire cloud that chases from behind: camp too long and it catches you
   fireSpeed: 120,
   fireGraceSec: 2.5,
@@ -251,6 +263,14 @@ export function generateLevel(grade: number, level: number, seedSalt = 'adv'): L
   const minGaps = level >= 30 ? Math.min(3, 1 + Math.floor(level / 80)) : 0;
   const { floorPlanks, floorGaps } = buildFloor(rng, missChance, level > 120, minGaps, finishX + 400);
 
+  // trail bonuses float between some hooks, up high where you swing past them
+  const bonuses: TrailBonus[] = [];
+  const nBonus = 1 + Math.floor(rng() * 2);
+  for (let i = 0; i < nBonus; i++) {
+    const a = anchors[randInt(rng, 1, anchors.length - 2)];
+    bonuses.push({ x: a.x + randInt(rng, -30, 120), y: randInt(rng, 200, 380), trailId: pick(rng, BONUS_TRAIL_IDS) });
+  }
+
   const stars: Star[] = [];
   for (let i = 0; i < 26; i++) {
     stars.push({
@@ -267,6 +287,7 @@ export function generateLevel(grade: number, level: number, seedSalt = 'adv'): L
     floorGaps,
     planks,
     portals: [],
+    bonuses,
     stars,
     startX: 60,
     startY: 340,
@@ -289,6 +310,7 @@ export function generateAdventureLevel(seed: number): Level {
   const anchors: Anchor[] = [];
   const portals: Portal[] = [];
   const planks: Plank[] = [];
+  const bonuses: TrailBonus[] = [];
 
   const N = 220;
   let x = 380;
@@ -306,6 +328,7 @@ export function generateAdventureLevel(seed: number): Level {
       const w = randInt(rng, 110, 190);
       planks.push({ x: x + 60, y: randInt(rng, 300, 520), w, h: 22 });
     }
+    if (i > 4 && rng() < 0.09) bonuses.push({ x: x + randInt(rng, 40, 130), y: randInt(rng, 190, 400), trailId: pick(rng, BONUS_TRAIL_IDS) });
   }
 
   const finishX = x + 600;
@@ -322,6 +345,7 @@ export function generateAdventureLevel(seed: number): Level {
     floorGaps,
     planks,
     portals,
+    bonuses,
     stars,
     startX: 60,
     startY: 340,

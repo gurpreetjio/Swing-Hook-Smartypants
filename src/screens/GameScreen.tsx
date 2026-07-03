@@ -16,7 +16,7 @@ export interface RoundStats extends MathGateResult {
   levelTimeSec: number;
 }
 
-const TRAIL_LEN = 16;
+const TRAIL_LEN = 34;
 const CONFETTI_COLORS = ['#ffd166', '#06d6a0', '#ef476f', '#4cc9f0', '#b388ff', '#ffffff', '#ff9e64'];
 
 interface ConfettiBit {
@@ -58,8 +58,6 @@ export function GameScreen({
   const { profile } = useStore();
   const skin = findSkin(profile.equippedSkin);
   const rope = findRope(profile.equippedRope);
-  const trail = findTrail(profile.equippedTrail);
-  const trailEmojis = trail.emoji;
 
   const lvl = useMemo(
     () =>
@@ -199,6 +197,11 @@ export function GameScreen({
   const sim = simRef.current;
   const cam = camRef.current;
 
+  // active trail: a grabbed bonus temporarily overrides the equipped one
+  const trail =
+    sim.trailOverride && sim.trailUntil > sim.t ? findTrail(sim.trailOverride) : findTrail(profile.equippedTrail);
+  const trailEmojis = trail.emoji;
+
   const targetIdx = sim.hooked === null && sim.status === 'alive' ? findAnchor(sim, lvl, mode) : null;
   const hookedAnchor = sim.hooked !== null ? lvl.anchors[sim.hooked] : null;
   const tilt = Math.max(-28, Math.min(28, sim.vx * 0.02));
@@ -314,6 +317,38 @@ export function GameScreen({
               )
             ))}
 
+            {/* trail-bonus pickups: grab one to change your trail for a while */}
+            {lvl.bonuses.map((b, i) => {
+              if (b.x < viewL || b.x > viewR || sim.collected.has(i)) return null;
+              const bt = findTrail(b.trailId);
+              const bob = Math.sin(sim.t * 3 + i) * 8;
+              return (
+                <G key={`bn${i}`}>
+                  <Circle cx={b.x} cy={b.y + bob} r={30} fill={theme.accent} opacity={0.14} />
+                  <Circle
+                    cx={b.x}
+                    cy={b.y + bob}
+                    r={22}
+                    fill="none"
+                    stroke={theme.accent}
+                    strokeWidth={2.5}
+                    strokeDasharray="6,6"
+                    rotation={(sim.t * 90) % 360}
+                    origin={`${b.x}, ${b.y + bob}`}
+                  />
+                  {bt.emoji ? (
+                    <SvgText x={b.x} y={b.y + bob + 10} fontSize={30} textAnchor="middle">
+                      {bt.emoji[0]}
+                    </SvgText>
+                  ) : (
+                    (bt.colors.length ? bt.colors : ['#ffd166']).slice(0, 5).map((c, k) => (
+                      <Circle key={k} cx={b.x - 12 + k * 6} cy={b.y + bob} r={5} fill={c} />
+                    ))
+                  )}
+                </G>
+              );
+            })}
+
             {/* anchors (diamonds); green = turbo spin, red = backward sling (one use) */}
             {lvl.anchors.map((a, i) => {
               if (a.x < viewL || a.x > viewR || sim.consumed.has(i)) return null;
@@ -349,21 +384,21 @@ export function GameScreen({
               />
             ) : null}
 
-            {/* trail: object followers (parachute pals etc.) or classic dots */}
+            {/* trail: big object followers (parachute pals etc.) or fat dots */}
             {trailEmojis
               ? trailRef.current.map((p, i) => {
-                  if (i % 3 !== 0) return null;
+                  if (i % 2 !== 0) return null;
                   const f = i / TRAIL_LEN;
                   return (
                     <SvgText
                       key={`t${i}`}
                       x={p.x}
-                      y={p.y + 24}
-                      fontSize={10 + f * 12}
-                      opacity={0.3 + f * 0.65}
+                      y={p.y + 34}
+                      fontSize={14 + f * 24}
+                      opacity={0.25 + f * 0.7}
                       textAnchor="middle"
                     >
-                      {trailEmojis[((i / 3) | 0) % trailEmojis.length]}
+                      {trailEmojis[((i / 2) | 0) % trailEmojis.length]}
                     </SvgText>
                   );
                 })
@@ -375,9 +410,9 @@ export function GameScreen({
                       key={`t${i}`}
                       cx={p.x}
                       cy={p.y + 14}
-                      r={2 + f * 6}
+                      r={3 + f * 13}
                       fill={trail.colors[i % trail.colors.length]}
-                      opacity={f * 0.5}
+                      opacity={f * 0.6}
                     />
                   );
                 })}
@@ -458,6 +493,15 @@ export function GameScreen({
         </View>
       </View>
 
+      {/* active trail-bonus badge */}
+      {phase === 'play' && sim.trailOverride && sim.trailUntil > sim.t && (
+        <View pointerEvents="none" style={styles.bonusBadge}>
+          <Text style={styles.bonusText}>
+            {(trailEmojis && trailEmojis[0]) || '🎨'} {trail.name} · {Math.ceil(sim.trailUntil - sim.t)}s
+          </Text>
+        </View>
+      )}
+
       {/* fire proximity warning */}
       {phase === 'play' && sim.status === 'alive' && fireGap < 450 && sim.t > 1 && (
         <View pointerEvents="none" style={styles.fireWarn}>
@@ -531,6 +575,18 @@ const styles = StyleSheet.create({
     borderColor: theme.line,
   },
   retryText: { color: theme.textDim, fontWeight: '800', fontSize: 13 },
+  bonusBadge: {
+    position: 'absolute',
+    top: 118,
+    alignSelf: 'center',
+    backgroundColor: '#1a1d4acc',
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: theme.accent,
+  },
+  bonusText: { color: theme.accent, fontWeight: '900', fontSize: 13 },
   fireWarn: { position: 'absolute', top: '40%', left: 24 },
   fireWarnText: { fontSize: 30, fontWeight: '900', color: '#ffb703' },
   clearedWrap: { position: 'absolute', top: '22%', left: 0, right: 0, alignItems: 'center' },

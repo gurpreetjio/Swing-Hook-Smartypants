@@ -179,6 +179,8 @@ for (const seed of [12345, 999, 424242]) {
   assert(alvl.portals.length >= 10, `adventure ${seed}: too few portals (${alvl.portals.length})`);
   assert(alvl.floorGaps.length >= 3, `adventure ${seed}: too few missing planks`);
   assert(alvl.fire === true, `adventure ${seed}: adventure runs must have the fire`);
+  assert(alvl.bonuses.length >= 2, `adventure ${seed}: too few trail bonuses (${alvl.bonuses.length})`);
+  assert(alvl.bonuses.every((b) => typeof b.trailId === 'string' && Number.isFinite(b.x) && Number.isFinite(b.y)), `adventure ${seed}: bad bonus`);
   for (let i = 1; i < alvl.floorGaps.length; i++) {
     assert(alvl.floorGaps[i].x0 >= alvl.floorGaps[i - 1].x1, `adventure ${seed}: overlapping gaps`);
   }
@@ -186,10 +188,16 @@ for (const seed of [12345, 999, 424242]) {
 console.log('adventure gen: ok');
 
 // synthetic mini-level for special-hook physics
-function makeLevel(anchors: Level['anchors'], portals: Level['portals'] = [], fire = false): Level {
+function makeLevel(
+  anchors: Level['anchors'],
+  portals: Level['portals'] = [],
+  fire = false,
+  bonuses: Level['bonuses'] = []
+): Level {
   return {
     anchors,
     portals,
+    bonuses,
     floorPlanks: [{ x0: -600, x1: 1e9 }],
     floorGaps: [],
     planks: [],
@@ -203,21 +211,47 @@ function makeLevel(anchors: Level['anchors'], portals: Level['portals'] = [], fi
   };
 }
 
-// red hook: slings you the opposite direction, then disappears (one use)
+// red hook: flings you THROUGH the hook to the far side, farther = faster,
+// then disappears (one use)
 {
+  // player below-left of the hook; sling should carry it up-and-right through it
   const lvl = makeLevel([{ x: 500, y: 100, kind: 'red' }]);
   const sim = newSim(lvl);
   sim.x = 430;
   sim.y = 300;
-  sim.vx = 400;
+  sim.vx = 0;
   sim.vy = 0;
   step(sim, lvl, 'swing', true, 1 / 120);
-  assert(sim.vx < 0, `red hook should reverse vx (got ${Math.round(sim.vx)})`);
+  assert(sim.vx > 0 && sim.vy < 0, `red sling should aim through the hook (got vx=${Math.round(sim.vx)}, vy=${Math.round(sim.vy)})`);
   assert(sim.hooked === null, 'red hook should never hold the rope');
   assert(sim.consumed.has(0), 'red hook should be consumed after use');
   assert(findAnchor(sim, lvl, 'swing') === null, 'consumed red hook should be unhookable');
   respawn(sim, lvl);
   assert(findAnchor(sim, lvl, 'swing') !== null, 'red hook should come back after a respawn');
+
+  // farther grab = faster sling
+  const near = makeLevel([{ x: 260, y: 340, kind: 'red' }]);
+  const far = makeLevel([{ x: 900, y: 340, kind: 'red' }]);
+  const sNear = newSim(near);
+  sNear.x = 200; sNear.y = 340; sNear.vx = 0; sNear.vy = 0;
+  step(sNear, near, 'swing', true, 1 / 120);
+  const sFar = newSim(far);
+  sFar.x = 200; sFar.y = 340; sFar.vx = 0; sFar.vy = 0;
+  step(sFar, far, 'swing', true, 1 / 120);
+  assert(Math.hypot(sFar.vx, sFar.vy) > Math.hypot(sNear.vx, sNear.vy) + 100, 'farther red grab should sling faster');
+}
+
+// trail bonus: touching one overrides the trail for a while, then expires
+{
+  const lvl = makeLevel([], [], false, [{ x: 250, y: 340, trailId: 't_rainbow' }]);
+  const sim = newSim(lvl);
+  sim.x = 250; sim.y = 340; sim.vx = 0; sim.vy = 0;
+  step(sim, lvl, 'swing', false, 1 / 120);
+  assert(sim.trailOverride === 't_rainbow', 'touching a bonus should set the trail override');
+  assert(sim.collected.has(0), 'bonus should be marked collected');
+  // fast-forward past the duration
+  for (let t = 0; t < 9; t += 1 / 60) step(sim, lvl, 'swing', false, 1 / 60);
+  assert(sim.trailOverride === null, 'bonus trail should expire');
 }
 
 // green hook: pumps speed faster than a normal hook
@@ -236,20 +270,29 @@ function makeLevel(anchors: Level['anchors'], portals: Level['portals'] = [], fi
   assert(speeds[1] > speeds[0] + 80, `green hook should spin faster (green ${Math.round(speeds[1])} vs normal ${Math.round(speeds[0])})`);
 }
 
-// portal: zooms you right, past the normal speed cap
+// portal: zooms you dead-horizontal past the speed cap, gravity-free, and a
+// second portal chains the effect
 {
-  const lvl = makeLevel([], [{ x: 800, y: 340, r: 34 }]);
+  const lvl = makeLevel([], [{ x: 800, y: 340, r: 34 }, { x: 2600, y: 340, r: 34 }]);
   const sim = newSim(lvl);
   sim.x = 700;
   sim.y = 340;
   sim.vx = 400;
   sim.vy = 0;
   let maxSp = 0;
-  for (let t = 0; t < 0.6; t += 1 / 120) {
+  let maxDrop = 0;
+  let chained = false;
+  for (let t = 0; t < 1.6; t += 1 / 120) {
+    const before = sim.dashUntil;
     step(sim, lvl, 'swing', false, 1 / 120);
     maxSp = Math.max(maxSp, Math.hypot(sim.vx, sim.vy));
+    maxDrop = Math.max(maxDrop, Math.abs(sim.y - 340));
+    // the second portal (reached mid-flight) refreshes the dash window
+    if (sim.x > 2400 && sim.dashUntil > before + 0.5) chained = true;
   }
   assert(maxSp > WORLD.maxSpeed + 200, `portal should exceed the speed cap (max ${Math.round(maxSp)})`);
+  assert(maxDrop < 30, `portal flight should stay horizontal (dropped ${Math.round(maxDrop)}px)`);
+  assert(chained, 'a second portal should chain/refresh the horizontal zoom');
 }
 console.log('special hooks & portals: ok');
 
