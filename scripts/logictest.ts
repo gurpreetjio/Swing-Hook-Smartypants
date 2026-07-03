@@ -3,7 +3,7 @@
  */
 import { generateQuestion } from '../src/math/mathGen';
 import { generateAdventureLevel, generateLevel, Level, stageForLevel, themeForLevel, THEMES, WORLD } from '../src/game/levelGen';
-import { findAnchor, newSim, step } from '../src/game/physics';
+import { findAnchor, newSim, respawn, step } from '../src/game/physics';
 import { weeklyRotation } from '../src/data/cosmetics';
 import { rankForXp, RANKS } from '../src/data/ranks';
 import { isoWeekKey, mulberry32 } from '../src/game/rng';
@@ -201,7 +201,7 @@ function makeLevel(anchors: Level['anchors'], portals: Level['portals'] = []): L
   };
 }
 
-// red hook: slings you the opposite direction you came from
+// red hook: slings you the opposite direction, then disappears (one use)
 {
   const lvl = makeLevel([{ x: 500, y: 100, kind: 'red' }]);
   const sim = newSim(lvl);
@@ -210,8 +210,12 @@ function makeLevel(anchors: Level['anchors'], portals: Level['portals'] = []): L
   sim.vx = 400;
   sim.vy = 0;
   step(sim, lvl, 'swing', true, 1 / 120);
-  assert(sim.hooked === 0, 'red hook should attach');
   assert(sim.vx < 0, `red hook should reverse vx (got ${Math.round(sim.vx)})`);
+  assert(sim.hooked === null, 'red hook should never hold the rope');
+  assert(sim.consumed.has(0), 'red hook should be consumed after use');
+  assert(findAnchor(sim, lvl, 'swing') === null, 'consumed red hook should be unhookable');
+  respawn(sim, lvl);
+  assert(findAnchor(sim, lvl, 'swing') !== null, 'red hook should come back after a respawn');
 }
 
 // green hook: pumps speed faster than a normal hook

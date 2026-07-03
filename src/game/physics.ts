@@ -18,6 +18,7 @@ export interface Sim {
   reelBoostUntil: number; // fast reel-in window after a quick re-tap
   dashUntil: number; // portal zoom window: speed cap is lifted
   portalCdUntil: number; // don't re-trigger the same portal instantly
+  consumed: Set<number>; // one-shot anchors (red hooks) already used this attempt
 }
 
 export function newSim(level: Level): Sim {
@@ -37,6 +38,7 @@ export function newSim(level: Level): Sim {
     reelBoostUntil: 0,
     dashUntil: 0,
     portalCdUntil: 0,
+    consumed: new Set(),
   };
 }
 
@@ -53,6 +55,7 @@ export function respawn(sim: Sim, level: Level): void {
   sim.reelBoostUntil = 0;
   sim.dashUntil = 0;
   sim.portalCdUntil = 0;
+  sim.consumed.clear();
 }
 
 /**
@@ -66,6 +69,7 @@ export function findAnchor(sim: Sim, level: Level, mode: GameMode): number | nul
   let best = -1;
   let bestScore = -Infinity;
   for (let i = 0; i < level.anchors.length; i++) {
+    if (sim.consumed.has(i)) continue; // spent red hooks are gone
     const a = level.anchors[i];
     const dx = a.x - sim.x;
     const dy = a.y - sim.y;
@@ -112,10 +116,13 @@ export function step(sim: Sim, level: Level, mode: GameMode, holding: boolean, d
         sim.vx += ((a.x - sim.x) / d) * 260;
         sim.vy += ((a.y - sim.y) / d) * 260;
       }
-      // red hooks sling you back the way you came from
+      // red hooks sling you back the way you came from, then vanish —
+      // one use per attempt, and the rope never actually holds
       if (a.kind === 'red') {
         sim.vx = -sim.vx * 1.15;
         sim.vy *= 0.9;
+        sim.consumed.add(idx);
+        sim.hooked = null;
       }
     }
   } else if (!holding && sim.hooked !== null) {

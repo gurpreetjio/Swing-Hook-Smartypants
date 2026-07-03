@@ -194,12 +194,12 @@ export function GameScreen({
   const sim = simRef.current;
   const cam = camRef.current;
 
-  // spike strips as triangle fans, precomputed per level
+  // spike strips as triangle fans, precomputed per level (with x for culling)
   const spikePolys = useMemo(() => {
-    const polys: string[] = [];
+    const polys: { x: number; pts: string }[] = [];
     for (const s of lvl.floorSpikes) {
       for (let x = s.x0; x < s.x1; x += 22) {
-        polys.push(`${x},${lvl.floorY} ${x + 11},${lvl.floorY - 20} ${x + 22},${lvl.floorY}`);
+        polys.push({ x, pts: `${x},${lvl.floorY} ${x + 11},${lvl.floorY - 20} ${x + 22},${lvl.floorY}` });
       }
     }
     return polys;
@@ -208,6 +208,11 @@ export function GameScreen({
   const targetIdx = sim.hooked === null && sim.status === 'alive' ? findAnchor(sim, lvl, mode) : null;
   const hookedAnchor = sim.hooked !== null ? lvl.anchors[sim.hooked] : null;
   const tilt = Math.max(-28, Math.min(28, sim.vx * 0.02));
+
+  // viewport culling: adventure courses have hundreds of entities — only
+  // mount SVG nodes for what's near the camera, or the frame rate tanks
+  const viewL = cam.x - 240;
+  const viewR = cam.x + width + 240;
 
   // visible floor pieces: the full span minus any gaps (nothing to land on there)
   const floorSegs: { x0: number; x1: number }[] = [];
@@ -258,12 +263,13 @@ export function GameScreen({
               </G>
             ))}
 
-            {spikePolys.map((p, i) => (
-              <Polygon key={`sp${i}`} points={p} fill={theme.hazard} />
-            ))}
+            {spikePolys.map((p, i) =>
+              p.x < viewL || p.x > viewR ? null : <Polygon key={`sp${i}`} points={p.pts} fill={theme.hazard} />
+            )}
 
             {/* bumper planks: horizontal bounce pads and vertical walls */}
             {lvl.planks.map((p, i) => {
+              if (p.x + p.w < viewL || p.x > viewR) return null;
               const vertical = p.h > p.w;
               const thin = Math.min(p.w, p.h);
               return (
@@ -293,6 +299,7 @@ export function GameScreen({
 
             {/* portals: zoom you fast to the right */}
             {lvl.portals.map((pt, i) => (
+              pt.x < viewL || pt.x > viewR ? null : (
               <G key={`po${i}`}>
                 <Circle cx={pt.x} cy={pt.y} r={pt.r + 8} fill={theme.accent2} opacity={0.16} />
                 <Circle cx={pt.x} cy={pt.y} r={pt.r} fill={theme.bgDeep} opacity={0.75} />
@@ -313,10 +320,12 @@ export function GameScreen({
                   opacity={0.9}
                 />
               </G>
+              )
             ))}
 
-            {/* anchors (diamonds); green = turbo spin, red = backward sling */}
+            {/* anchors (diamonds); green = turbo spin, red = backward sling (one use) */}
             {lvl.anchors.map((a, i) => {
+              if (a.x < viewL || a.x > viewR || sim.consumed.has(i)) return null;
               const active = i === sim.hooked;
               const target = i === targetIdx;
               const kindColor = a.kind === 'green' ? '#3ddc84' : a.kind === 'red' ? '#ff5252' : world.anchor;
@@ -337,6 +346,7 @@ export function GameScreen({
 
             {/* air hazards (vertical or horizontal sweepers) */}
             {lvl.airHazards.map((h, i) => {
+              if (h.x + h.oscAmp < viewL || h.x - h.oscAmp > viewR) return null;
               const osc = h.oscAmp ? Math.sin(sim.t * h.oscSpeed + h.phase) * h.oscAmp : 0;
               const hx = h.x + (h.axis === 'x' ? osc : 0);
               const hy = h.y + (h.axis === 'y' ? osc : 0);
